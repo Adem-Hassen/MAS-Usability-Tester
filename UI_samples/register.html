@@ -1,0 +1,96 @@
+    <!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Create Account</title>
+  <style>
+    body { font-family: sans-serif; max-width: 480px; margin: 50px auto; padding: 24px; }
+    h1 { margin-bottom: 4px; }
+    .subtitle { color: #666; margin-bottom: 24px; font-size: 14px; }
+    label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+    input[type=text], input[type=email], input[type=password] {
+      display: block; width: 100%; padding: 10px; border: 1px solid #ccc;
+      border-radius: 4px; margin-bottom: 16px; font-size: 14px; box-sizing: border-box;
+    }
+    .row { display: flex; gap: 12px; }
+    .row > div { flex: 1; }
+    /* Password strength bar */
+    .strength-bar { height: 4px; border-radius: 2px; margin-bottom: 16px; background: #e0e0e0; }
+    .strength-fill { height: 100%; border-radius: 2px; width: 0%; background: red;
+                     transition: width .3s, background .3s; }
+    /* Issue: strength communicated by color only — no text label -->*/
+    .hint { font-size: 12px; color: #888; margin-top: -12px; margin-bottom: 12px; }
+    .terms { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 20px; font-size: 13px; }
+    .terms input { width: auto; margin: 0; margin-top: 2px; }
+    /* Issue: terms checkbox has no visible focus ring -->*/
+    button[type=submit] {
+      width: 100%; padding: 12px; background: #5c35f5; color: white;
+      border: none; border-radius: 4px; font-size: 16px; cursor: pointer;
+    }
+    .login-link { text-align: center; margin-top: 16px; font-size: 13px; }
+    .error { color: red; font-size: 12px; margin-top: -12px; margin-bottom: 8px; display: none; }
+    /* Issue: error messages not linked to fields via aria-describedby --> */
+  </style>
+</head>
+<body>
+  <h1>Create Account</h1>
+  <p class="subtitle">Start your free 14-day trial. No credit card required.</p>
+
+  <div class="row">
+    <div>
+      <label for="fname">First name</label>
+      <input type="text" id="fname" name="fname" autocomplete="given-name">
+    </div>
+    <div>
+      <label for="lname">Last name</label>
+      <input type="text" id="lname" name="lname" autocomplete="family-name">
+    </div>
+  </div>
+
+  <label for="email">Work email</label>
+  <input type="email" id="email" name="email" autocomplete="email" placeholder="you@company.com">
+  <div class="error" id="email-error">Please enter a valid email address.</div>
+
+  <!-- Issue: no username field — unclear if email IS the username -->
+  <label for="password">Password</label>
+  <input type="password" id="password" name="password" oninput="checkStrength(this.value)">
+  <div class="strength-bar"><div class="strength-fill" id="strength-fill"></div></div>
+  <!-- Issue: no text indicator for screen readers of password strength -->
+  <p class="hint">Min 8 characters. Use letters, numbers and symbols.</p>
+
+  <label for="confirm">Confirm password</label>
+  <input type="password" id="confirm" name="confirm">
+  <!-- Issue: no live validation that passwords match -->
+
+  <div class="terms">
+    <!-- Issue: no aria-required on checkbox -->
+    <input type="checkbox" id="terms">
+    <label for="terms" style="font-weight:normal">
+      I agree to the <a href="#">Terms of Service</a> and <a href="#">Privacy Policy</a>
+    </label>
+  </div>
+
+  <button type="submit" onclick="register()">Create Account</button>
+
+  <p class="login-link">Already have an account? <a href="#">Sign in</a></p>
+
+  <script>
+    function checkStrength(val) {
+      const fill = document.getElementById('strength-fill');
+      let score = 0;
+      if (val.length >= 8) score++;
+      if (/[A-Z]/.test(val)) score++;
+      if (/[0-9]/.test(val)) score++;
+      if (/[^A-Za-z0-9]/.test(val)) score++;
+      const pct = (score / 4) * 100;
+      const colors = ['red', 'orange', 'gold', 'green'];
+      fill.style.width = pct + '%';
+      fill.style.background = colors[score - 1] || 'red';
+    }
+
+    function register() {
+      // no actual validation — just prevent default
+    }
+  </script>
+</body>
+</html>

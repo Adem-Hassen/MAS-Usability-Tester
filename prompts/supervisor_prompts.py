@@ -71,7 +71,7 @@ Each PersonaProfile must match this exact schema:
 
 {{
   "persona_id": "string — e.g. 'persona_1'",
-  "name": "string — short descriptive name",
+  "name": "stringe — e.g. 'Jhon Harper' ",
   "age_range": "string — e.g. '25-35'",
   "technical_skill": "low | medium | high",
   "accessibility_constraints": ["string", ...],

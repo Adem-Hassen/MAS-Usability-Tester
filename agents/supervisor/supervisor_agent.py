@@ -31,7 +31,7 @@ from monitoring.logger import get_logger
 logger = get_logger(__name__)
 
 # Configure Gemini client once at module load
-genai.configure(api_key=settings.gemini_api_key)
+genai.configure(api_key=settings.supervisor_api_key)
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ def _call_gemini(
     """
     try:
         model = genai.GenerativeModel(
-            model_name=settings.gemini_model,
+            model_name=settings.supervisor_llm_model,
             system_instruction=system_prompt,
             generation_config=genai.GenerationConfig(
                 response_mime_type="application/json",
@@ -213,7 +213,7 @@ def _call_gemini(
             ),
         )
 
-        logger.info(f"supervisor.gemini_call.{task}.start")
+        logger.info(f"supervisor.llm_call.{task}.start")
         response = model.generate_content(user_prompt)
         raw = response.text.strip()
 
@@ -225,9 +225,9 @@ def _call_gemini(
                 if not line.strip().startswith("```")
             ).strip()
 
-        logger.info(f"supervisor.gemini_call.{task}.complete", chars=len(raw))
+        logger.info(f"supervisor.llm_call.{task}.complete", chars=len(raw))
         return raw, None
 
     except Exception as e:
-        logger.error(f"supervisor.gemini_call.{task}.error", error=str(e))
+        logger.error(f"supervisor.llm_call.{task}.error", error=str(e))
         return "", f"Gemini call failed ({task}): {e}"

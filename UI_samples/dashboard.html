@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Analytics Dashboard</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; margin: 0; background: #f4f6f9; }
+    nav { background: #1a1a2e; color: white; padding: 0 24px; display: flex;
+          align-items: center; height: 56px; gap: 32px; }
+    nav a { color: #ccc; text-decoration: none; font-size: 14px; }
+    /* Issue: no active state indicator on nav */
+    .main { display: flex; }
+    aside { width: 200px; background: white; min-height: calc(100vh - 56px);
+            padding: 16px; border-right: 1px solid #e0e0e0; }
+    /* Issue: sidebar links have no labels, only icons (placeholder text here) -->*/
+    aside a { display: block; padding: 8px; color: #333; text-decoration: none;
+              margin-bottom: 4px; border-radius: 4px; }
+    content { flex: 1; padding: 24px; }
+    .cards { display: flex; gap: 16px; margin-bottom: 24px; }
+    .card { background: white; border-radius: 8px; padding: 16px; flex: 1;
+            box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+    /* Issue: card numbers have no units or context labels -->*/
+    .card .number { font-size: 32px; font-weight: bold; color: #007bff; }
+    table { width: 100%; border-collapse: collapse; background: white;
+            border-radius: 8px; overflow: hidden; }
+    th { background: #f0f0f0; text-align: left; padding: 12px; font-size: 13px; }
+    td { padding: 12px; border-top: 1px solid #f0f0f0; font-size: 14px; }
+    /* Issue: no sortable columns, no accessible table caption -->*/
+    .badge { padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+    .badge.green { background: #d4edda; color: #155724; }
+    .badge.red   { background: #f8d7da; color: #721c24; }
+    /* Issue: color alone used to convey status — fails WCAG 1.4.1 -->*/
+    button.action { border: none; background: none; cursor: pointer; color: #007bff;
+                    font-size: 13px; padding: 4px 8px; }
+    /* Issue: action buttons have no aria-label, only icon text -->*/
+    .search { display: flex; gap: 8px; margin-bottom: 16px; }
+    .search input { padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px;
+                    font-size: 14px; width: 240px; }
+    /* Issue: search input has no label -->*/
+  </style>
+</head>
+<body>
+
+<nav>
+  <strong style="color:white">Acme Analytics</strong>
+  <a href="#">Dashboard</a>
+  <a href="#">Reports</a>
+  <a href="#">Settings</a>
+  <!-- Issue: no user account menu, no logout -->
+</nav>
+
+<div class="main">
+  <aside>
+    <a href="#">📊 Overview</a>
+    <a href="#">👥 Users</a>
+    <a href="#">💰 Revenue</a>
+    <a href="#">📦 Orders</a>
+    <a href="#">⚙️ Config</a>
+    <!-- Issue: emoji-only labels not read correctly by screen readers -->
+  </aside>
+
+  <div style="flex:1; padding:24px">
+    <h1 style="margin-top:0">Overview</h1>
+
+    <div class="cards">
+      <div class="card">
+        <div style="font-size:13px;color:#666">Total Users</div>
+        <div class="number">12,840</div>
+        <!-- Issue: no change indicator or time range context -->
+      </div>
+      <div class="card">
+        <div style="font-size:13px;color:#666">Revenue</div>
+        <div class="number">$94,210</div>
+      </div>
+      <div class="card">
+        <div style="font-size:13px;color:#666">Orders</div>
+        <div class="number">3,291</div>
+      </div>
+      <div class="card">
+        <div style="font-size:13px;color:#666">Conversion</div>
+        <div class="number">4.2%</div>
+      </div>
+    </div>
+
+    <div class="search">
+      <!-- Issue: no <label> on search input -->
+      <input type="text" placeholder="Search orders...">
+      <button>Search</button>
+    </div>
+
+    <table>
+      <!-- Issue: no <caption> on table -->
+      <thead>
+        <tr>
+          <th>Order ID</th>
+          <th>Customer</th>
+          <th>Amount</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>#10042</td>
+          <td>Alice Johnson</td>
+          <td>$128.00</td>
+          <!-- Issue: status communicated by color only -->
+          <td><span class="badge green">Shipped</span></td>
+          <td>
+            <button class="action">✏️</button>
+            <button class="action">🗑️</button>
+          </td>
+        </tr>
+        <tr>
+          <td>#10041</td>
+          <td>Bob Martinez</td>
+          <td>$54.50</td>
+          <td><span class="badge red">Failed</span></td>
+          <td>
+            <button class="action">✏️</button>
+            <button class="action">🗑️</button>
+          </td>
+        </tr>
+        <tr>
+          <td>#10040</td>
+          <td>Carol White</td>
+          <td>$210.00</td>
+          <td><span class="badge green">Delivered</span></td>
+          <td>
+            <button class="action">✏️</button>
+            <button class="action">🗑️</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+</body>
+</html>

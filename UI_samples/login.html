@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Login</title>
+  <style>
+    body { font-family: sans-serif; max-width: 400px; margin: 60px auto; padding: 20px; }
+    input { display: block; width: 100%; margin: 8px 0 16px; padding: 8px; box-sizing: border-box; }
+    button { padding: 10px 24px; background: #007bff; color: #fff; border: none; cursor: pointer; }
+    .error { color: red; font-size: 12px; }
+    .forgot { font-size: 12px; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>Login</h1>
+  <!-- Issue: no <label> for email -->
+  <input type="text" placeholder="Email" id="email">
+  <!-- Issue: no <label> for password -->
+  <input type="password" placeholder="Password" id="password">
+  <!-- Issue: no visible focus style -->
+  <button onclick="login()">Login</button>
+  <p class="error" id="error-msg" aria-live="polite"></p>
+  <!-- Issue: no link to registration -->
+  <p class="forgot"><a href="#">Forgot password?</a></p>
+  <script>
+    function login() {
+      const e = document.getElementById('email').value;
+      const p = document.getElementById('password').value;
+      if (!e || !p) {
+        document.getElementById('error-msg').textContent = 'Please fill all fields.';
+      }
+    }
+  </script>
+</body>
+</html>
