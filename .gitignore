@@ -19,6 +19,8 @@ build/
 dist/
 *.egg-info/
 
+UI_samples/
+
 # Logs
 *.log
 
