@@ -37,7 +37,7 @@ class Settings(BaseSettings):
         description="API key for Persona agents. Set PERSONA_API_KEY in .env."
     )
     persona_llm_model: str = Field(
-        "gemini-2.5-flash-lite",
+        "meta-llama/llama-4-scout-17b-16e-instruct",
         description=(
             "LLM model for Persona agents. "
             "Lighter/faster model recommended — this is the highest-volume agent."

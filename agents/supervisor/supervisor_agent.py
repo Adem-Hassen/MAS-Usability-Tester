@@ -91,6 +91,55 @@ def supervisor_node(state: GraphState) -> dict:
     }
 
 
+def _detect_storage_requirements(html_content: str) -> dict:
+    """
+    Scan the HTML source for localStorage / sessionStorage reads.
+    For every key the page reads, inject a safe dummy value so auth
+    guards and feature flags don't redirect the browser to a missing page.
+
+    Returns: {"localStorage": {"key": "value", ...}, "sessionStorage": {...}}
+    Both dicts may be empty.
+
+    Detection strategy — regex over the raw source:
+      localStorage.getItem('key')
+      localStorage.getItem("key")
+      sessionStorage.getItem('key')
+    """
+    import re
+
+    seeds: dict = {"localStorage": {}, "sessionStorage": {}}
+
+    # Match getItem('key') or getItem("key")
+    pattern = r'(localStorage|sessionStorage)\s*\.\s*getItem\s*\(\s*["\'](.*?)["\'"]\s*\)'
+    for match in re.finditer(pattern, html_content):
+        store, key = match.group(1), match.group(2)
+        if not key:
+            continue
+        # Choose a safe seed value based on key name heuristics
+        lkey = key.lower()
+        if any(x in lkey for x in ("email", "mail")):
+            value = "test.user@example.com"
+        elif any(x in lkey for x in ("user", "name", "username")):
+            value = "test_user"
+        elif any(x in lkey for x in ("token", "auth", "jwt", "session", "access")):
+            value = "sandbox_token_abc123"
+        elif any(x in lkey for x in ("id", "userid", "user_id")):
+            value = "user_001"
+        elif any(x in lkey for x in ("role", "permission", "level")):
+            value = "user"
+        elif any(x in lkey for x in ("flag", "feature", "enabled")):
+            value = "true"
+        elif any(x in lkey for x in ("lang", "locale", "language")):
+            value = "en"
+        elif any(x in lkey for x in ("theme", "mode", "color")):
+            value = "light"
+        else:
+            value = "sandbox_value"
+
+        seeds[store][key] = value
+
+    return seeds
+
 # ---------------------------------------------------------------------------
 # Step 1: Read HTML
 # ---------------------------------------------------------------------------

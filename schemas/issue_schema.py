@@ -1,8 +1,13 @@
+# schemas/issue_schema.py
 from __future__ import annotations
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
 from enum import Enum
 
+
+# ---------------------------------------------------------------------------
+# Enums
+# ---------------------------------------------------------------------------
 
 class IssueSeverity(str, Enum):
     CRITICAL = "critical"   # blocks task completion entirely
@@ -35,21 +40,21 @@ ActionType = Literal["click", "type", "scroll", "navigate", "observe", "hover"]
 # ---------------------------------------------------------------------------
 
 class ActionStep(BaseModel):
-   
+    """One step in a persona's interaction trace."""
     step_number: int
     action_type: ActionType
     target_selector: Optional[str] = Field(
         None,
         description="CSS selector of the target element (None for page-level actions)"
     )
-    target_description: str = Field(..., description="Human-readable description of the target")
+    target_description: str = Field("", description="Human-readable description of the target")
     value: Optional[str] = Field(None, description="Text typed, scroll direction, URL navigated to, etc.")
     reasoning: str = Field(
-        ...,
+        "",
         description="Why the agent chose this action given the persona profile and current goal"
     )
     page_state_summary: str = Field(
-        ...,
+        "",
         description="Brief description of the visible page state before this action"
     )
     success: bool = Field(True, description="Whether the action executed without error")
@@ -153,7 +158,9 @@ class PersonaSimulationResult(BaseModel):
     model_config = {"use_enum_values": True}
 
 
-
+# ---------------------------------------------------------------------------
+# Issue cluster
+# ---------------------------------------------------------------------------
 
 class IssueCluster(BaseModel):
     """

@@ -21,6 +21,8 @@ class GraphState(TypedDict):
     html_source_path: str           # absolute path to the HTML file
     html_content: str               # raw HTML string read from file
     ui_context: str                 # user-provided description of the UI's purpose
+  
+    storage_seed: Optional[dict]    # e.g. {"localStorage": {"userEmail": "test@test.com"}}
 
     # --- Supervisor outputs ---
     ui_analysis: Optional[UIAnalysis]       # structured analysis of the HTML
