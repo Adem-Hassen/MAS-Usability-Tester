@@ -19,7 +19,7 @@ build/
 dist/
 *.egg-info/
 
-UI_samples/
+test_pages/
 
 # Logs
 *.log

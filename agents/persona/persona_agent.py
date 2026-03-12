@@ -135,6 +135,7 @@ class PersonaRunner:
             persona_id=self.persona.persona_id,
             persona_name=self.persona.name,
             task_goal=self.persona.task_goal,
+            selection_rationale=getattr(self.persona, "selection_rationale", ""),
             stop_reason=stop_reason,
             steps_taken=len(self.steps),
             action_trace=self.steps,

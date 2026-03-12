@@ -5,7 +5,9 @@ from typing import Optional, Literal
 import uuid
 
 
-
+# ---------------------------------------------------------------------------
+# UI Analysis — produced by Supervisor before persona generation
+# ---------------------------------------------------------------------------
 
 class InteractiveElement(BaseModel):
     """A single interactive element found in the HTML."""
@@ -53,7 +55,9 @@ class UIAnalysis(BaseModel):
     model_config = {"use_enum_values": True}
 
 
-
+# ---------------------------------------------------------------------------
+# Persona Profile
+# ---------------------------------------------------------------------------
 
 TechnicalSkill    = Literal["low", "medium", "high"]
 RiskTolerance     = Literal["low", "medium", "high"]
@@ -102,6 +106,16 @@ class PersonaProfile(BaseModel):
     success_criteria: list[str] = Field(
         ...,
         description="Concrete observable conditions that confirm the task is complete"
+    )
+
+    # Why the supervisor generated this persona
+    selection_rationale: str = Field(
+        "",
+        description=(
+            "Supervisor's reasoning for including this persona: which UI risk or coverage gap "
+            "it addresses, and why this specific profile (skill level, constraints, goal) "
+            "was chosen over alternatives."
+        )
     )
 
     # Behavioral profile

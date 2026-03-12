@@ -20,7 +20,7 @@ class Settings(BaseSettings):
         description="API key for the Supervisor agent. Set SUPERVISOR_API_KEY in .env."
     )
     supervisor_llm_model: str = Field(
-        "gemini-2.5-flash",
+        "openai/gpt-oss-120b",
         description="LLM model for the Supervisor agent. Any provider string accepted."
     )
     supervisor_temperature: float = Field(

@@ -21,7 +21,9 @@ class GraphState(TypedDict):
     html_source_path: str           # absolute path to the HTML file
     html_content: str               # raw HTML string read from file
     ui_context: str                 # user-provided description of the UI's purpose
-  
+    # Storage values to seed into the browser before page load (prevents auth-guard redirects).
+    # Detected automatically by the supervisor from the HTML source.
+    # Format: {"localStorage": {"key": "value"}, "sessionStorage": {"key": "value"}}
     storage_seed: Optional[dict]    # e.g. {"localStorage": {"userEmail": "test@test.com"}}
 
     # --- Supervisor outputs ---
@@ -31,8 +33,12 @@ class GraphState(TypedDict):
     # --- Persona agent outputs (parallel fan-out, results accumulated) ---
     simulation_results: Annotated[list[PersonaSimulationResult], operator.add]
 
-    # --- Clustering outputs ---
-    issue_clusters: list[IssueCluster]
+    # --- Post-simulation analysis (supervisor phase 2) ---
+    trace_verifications: list   # list[TraceVerification] — one per persona
+    verified_results: list      # list[PersonaSimulationResult] — INVALID traces removed, INVALID steps stripped
+    verified_issues: list       # list[IssueReport] — issues from valid/suspect steps only
+    issue_clusters: list        # list[IssueCluster] — clustered verified issues
+    recommender_profiles: list  # list[RecommenderProfile] — one per cluster
 
     # --- Recommender outputs (parallel fan-out, one per cluster) ---
     patch_proposals: Annotated[list[PatchProposal], operator.add]
