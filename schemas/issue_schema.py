@@ -76,6 +76,7 @@ class IssueReport(BaseModel):
     """
     issue_id: str = Field(..., description="Unique ID, e.g. 'persona_1_issue_3'")
     persona_id: str
+    UI_page: str = Field(..., description="The UI page the issue was found")
     persona_name: str
 
     # Classification
@@ -254,9 +255,24 @@ class RecommenderProfile(BaseModel):
     after clustering. One profile → one recommender instance spawned.
     """
     recommender_id: str = Field(..., description="e.g. 'rec_1'")
+    recommender_name: str = Field(
+        ...,
+        description=(
+            "Short memorable name for this recommender agent, "
+            "reflecting its specialty (e.g. 'AriaFixer', 'FormGuard', 'NavSentinel')"
+        )
+    )
     cluster_id: str = Field(..., description="The IssueCluster this agent owns")
     cluster_label: str = Field(..., description="Human-readable cluster label")
     focus: RecommenderFocus = Field(..., description="Primary domain expertise for this agent")
+    num_recommenders: int = Field(
+        default=1, ge=1, le=4,
+        description=(
+            "Number of recommender instances to spawn for this cluster. "
+            "1 for simple/uniform clusters; 2-3 for clusters with mixed severity or diverse "
+            "affected elements; 4 only for critical clusters spanning many components."
+        )
+    )
 
     # What the recommender needs to know
     cluster_summary: str = Field(

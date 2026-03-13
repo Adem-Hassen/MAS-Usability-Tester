@@ -1,4 +1,30 @@
 # tools/analysis/cluster_engine.py
+"""
+Clustering Node — fully implemented.
+
+Pipeline:
+  1. Collect all verified IssueReport objects from state["verified_issues"]
+     (pre-filtered by analysis_node to exclude issues from invalid trace steps)
+  2. Build a rich text representation of each issue for embedding
+  3. Embed with sentence-transformers (all-MiniLM-L6-v2 — fast, good quality)
+  4. Cluster with HDBSCAN:
+       - No need to specify K upfront
+       - Noise points (label == -1) become singleton clusters
+       - min_cluster_size tuned to issue volume
+  5. Derive cluster metadata deterministically from member issues
+  6. Output list[IssueCluster] → passed to recommender_profile_node in supervisor
+
+Why HDBSCAN over K-Means:
+  - No need to specify number of clusters upfront
+  - Handles noise/outlier issues as singletons rather than forcing them into a cluster
+  - Robust to varying issue density across a run
+  - Consistent results on small datasets (4-20 issues typical per page)
+
+Why sentence-transformers over TF-IDF:
+  - Captures semantic similarity: "missing label" and "no accessible name" cluster together
+  - Robust to different phrasings of the same underlying problem
+  - Fast CPU inference (~50ms for 20 issues on all-MiniLM-L6-v2)
+"""
 
 from __future__ import annotations
 
@@ -61,8 +87,8 @@ def clustering_node(state: GraphState) -> dict:
 def _issue_to_text(issue: IssueReport) -> str:
     """
     Build a rich embedding input from an issue.
-    Combines title + description + category + wcag + affected element.
-    More signal → better clustering quality.
+    Combines title + description + category + wcag + affected element + UI_page.
+    UI_page keeps issues from different pages separated unless they share root cause.
     """
     parts = [issue.title, issue.description[:300]]
     if issue.wcag_criterion:
@@ -70,6 +96,8 @@ def _issue_to_text(issue: IssueReport) -> str:
     parts.append(str(issue.category))
     if issue.affected_element:
         parts.append(issue.affected_element)
+    if issue.UI_page:
+        parts.append(issue.UI_page)
     return " | ".join(p for p in parts if p)
 
 
@@ -77,9 +105,28 @@ def _embed_issues(issues: list[IssueReport]) -> np.ndarray:
     """
     Embed all issues using sentence-transformers all-MiniLM-L6-v2.
     Returns shape (N, embedding_dim).
+
+    Suppresses two known-benign warnings before model load:
+      - HF Hub unauthenticated rate-limit warning (no token needed for public models)
+      - BertModel LOAD REPORT: embeddings.position_ids UNEXPECTED
+        (this key is in the safetensors checkpoint but unused by BertModel — harmless)
     """
+    import logging
+    import warnings
+
+    # Silence HF Hub "unauthenticated" noise and sentence-transformers load report
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+    logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+    # safetensors / transformers logs the LOAD REPORT at WARNING level
+    logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
+    warnings.filterwarnings(
+        "ignore",
+        message=".*unauthenticated.*",
+        category=UserWarning,
+    )
+
     from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer("all-MiniLM-L6-v2")
+    model = SentenceTransformer("all-MiniLM-L6-v2", tokenizer_kwargs={"clean_up_tokenization_spaces": True})
     texts = [_issue_to_text(iss) for iss in issues]
     embeddings = model.encode(texts, show_progress_bar=False, batch_size=32)
     return np.array(embeddings)

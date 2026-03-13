@@ -114,6 +114,7 @@ You will output ONLY valid JSON matching this exact schema — no explanation, n
     "category": "usability | accessibility | navigation | clarity | form | other",
     "title": "short issue title",
     "description": "what went wrong and why it matters for your persona",
+    "UI_page": "name or path of the UI page where this issue was found",
     "persona_impact": "how this blocks or frustrates your specific persona"
   }}
 }}
@@ -171,6 +172,7 @@ Output ONLY a valid JSON array of issue objects — no explanation, no markdown:
     "affected_element": "CSS selector or null",
     "affected_element_html": "the raw HTML snippet causing the issue or null",
     "reproduction_steps": ["step 1", "step 2", ...],
+    "UI_page": "name or path of the UI page where this issue was found",
     "persona_impact": "how this specifically affects the persona trying to complete their goal"
   }}
 ]

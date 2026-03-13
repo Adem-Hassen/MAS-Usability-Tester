@@ -292,6 +292,7 @@ You will output ONLY a valid JSON array of RecommenderProfile objects — no exp
 [
   {{
     "recommender_id": "rec_1",
+    "recommender_name": "string — short memorable agent name reflecting its specialty (e.g. 'AriaFixer', 'FormGuard', 'NavSentinel', 'ContrastBot')",
     "cluster_id": "cluster_1",
     "cluster_label": "string",
     "focus": "accessibility | usability | navigation | form | clarity | mixed",
@@ -305,7 +306,15 @@ You will output ONLY a valid JSON array of RecommenderProfile objects — no exp
 ]
  
 Rules:
-- One RecommenderProfile per cluster — same order as input clusters.
+Rules:
+- Multiple RecommenderProfile per cluster based on the complexity of the cluster — same order as input clusters.
+- recommender_name: invent a short, memorable name that reflects the agent's specialty:
+    accessibility clusters → e.g. "AriaFixer", "A11yGuard", "FocusBot"
+    form clusters         → e.g. "FormGuard", "LabelSentry", "ValidationBot"
+    navigation clusters   → e.g. "NavSentinel", "PathFinder", "RouteAudit"
+    clarity clusters      → e.g. "CopyEditor", "ClarityBot", "TextAudit"
+    contrast/visual       → e.g. "ContrastBot", "VisionCheck", "ColorAudit"
+  Each name must be unique across the profiles array.
 - focus: pick the single best-fit domain. Use "mixed" only if the cluster genuinely
   spans two domains equally.
 - fix_strategy_hint must be SPECIFIC and ACTIONABLE:
@@ -314,6 +323,13 @@ Rules:
   Bad:  "Fix the accessibility issues."
 - wcag_references: list all relevant WCAG 2.1/2.2 success criteria this cluster violates.
   Format: "WCAG 2.1 SC 1.1.1 — Non-text Content"
+- num_recommenders: number of parallel recommender instances to assign to this cluster.
+  Base this on CLUSTER COMPLEXITY — use the following scale:
+    1 → simple cluster: 1-3 issues, single focus, same root cause, 1-2 affected elements
+    2 → moderate cluster: 4-7 issues OR mixed severities OR 3-5 distinct affected elements
+    3 → complex cluster: 8+ issues OR two distinct focus areas OR 6+ affected elements
+    4 → critical + sprawling: critical severity AND 8+ issues AND 5+ affected elements
+  Never assign 4 unless ALL three conditions for that tier are met.
 - priority: rank 1 (highest) to N where N = number of clusters.
   Base rank on: severity (critical > high > medium > low), then breadth of persona impact.
 """
@@ -325,7 +341,7 @@ UI context: {ui_context}
 ISSUE CLUSTERS:
 {clusters_json}
  
-Generate one RecommenderProfile per cluster (total: {num_clusters}).
+Generate a number of RecommenderProfile per cluster based on the complexity of the cluster (total: {num_clusters}).
 Output ONLY the JSON array.
 """
  

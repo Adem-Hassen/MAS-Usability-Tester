@@ -4,12 +4,12 @@ Supervisor Node — fully implemented.
 
 Pipeline:
   1. Read HTML file from disk
-  2. Call Gemini: HTML → UIAnalysis (structured JSON)
-  3. Call Gemini: UIAnalysis → list[PersonaProfile] (structured JSON)
+  2. Call OpenAI gpt-4.1: HTML → UIAnalysis (structured JSON)
+  3. Call OpenAI gpt-4.1: UIAnalysis → list[PersonaProfile] (structured JSON)
   4. Validate both outputs with Pydantic
   5. Write to graph state for fan-out
 
-Gemini is called with response_mime_type="application/json" to enforce
+OpenAI is called with response_format={"type":"json_object"} to enforce
 structured output without markdown fences.
 """
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from groq import Groq
+from openai import OpenAI
 
 from config.settings import settings
 from core.state import GraphState
@@ -68,8 +68,17 @@ def supervisor_node(state: GraphState) -> dict:
         a11y_risk=ui_analysis.accessibility_risk_level,
     )
 
-    # 3. Generate personas
-    personas, error = _generate_personas(ui_analysis, ui_context)
+    # 3. Generate personas (with cross-run diversity enforcement)
+    used_names       = state.get("used_persona_names", [])
+    used_goals       = state.get("used_persona_goals", [])
+    used_constraints = state.get("used_persona_constraints", [])
+
+    personas, error = _generate_personas(
+        ui_analysis, ui_context,
+        used_names=used_names,
+        used_goals=used_goals,
+        used_constraints=used_constraints,
+    )
     if error:
         return {"pipeline_error": f"Persona generation failed: {error}"}
 
@@ -92,12 +101,22 @@ def supervisor_node(state: GraphState) -> dict:
             sessionStorage_keys=list(storage_seed.get("sessionStorage", {}).keys()),
         )
 
+    # Accumulate used names/goals/constraints for the next page's persona generation
+    new_names       = used_names + [p.name for p in personas]
+    new_goals       = used_goals + [p.task_goal for p in personas]
+    new_constraints = used_constraints + [
+        c for p in personas for c in p.accessibility_constraints
+    ]
+
     return {
         "html_content": html_content,
         "ui_analysis": ui_analysis,
         "personas": personas,
         "storage_seed": storage_seed,
         "simulation_results": [],
+        "used_persona_names":       new_names,
+        "used_persona_goals":       new_goals,
+        "used_persona_constraints": new_constraints,
         "patch_proposals": [],
         "correction_loop_count": 0,
         "verification_passed": False,
@@ -186,7 +205,7 @@ def _analyze_ui(html_content: str, ui_context: str) -> tuple[UIAnalysis | None, 
         html_content=html_content,
     )
 
-    raw_json, error = _call_gemini(
+    raw_json, error = _call_supervisor_llm(
         system_prompt=UI_ANALYSIS_SYSTEM,
         user_prompt=user_prompt,
         task="ui_analysis",
@@ -210,19 +229,47 @@ def _analyze_ui(html_content: str, ui_context: str) -> tuple[UIAnalysis | None, 
 def _generate_personas(
     ui_analysis: UIAnalysis,
     ui_context: str,
+    used_names: list[str] | None = None,
+    used_goals: list[str] | None = None,
+    used_constraints: list[str] | None = None,
 ) -> tuple[list[PersonaProfile] | None, str | None]:
-    """Calls Gemini to produce N PersonaProfile objects from the UIAnalysis."""
+    """Calls OpenAI to produce N PersonaProfile objects from the UIAnalysis.
+    Injects previously-used names, goals and constraints so the LLM generates
+    diverse personas across multiple pages / runs.
+    """
+    diversity_block = ""
+    if used_names or used_goals or used_constraints:
+        parts = []
+        if used_names:
+            parts.append(f"Names already used (DO NOT reuse): {', '.join(used_names)}")
+        if used_goals:
+            parts.append(
+                "Task goals already covered (generate different goals, different entry points):\n"
+                + "\n".join(f"  - {g}" for g in used_goals[:10])
+            )
+        if used_constraints:
+            parts.append(
+                "Accessibility constraint profiles already used (ensure variety):\n"
+                + "\n".join(f"  - {c}" for c in list(dict.fromkeys(used_constraints))[:10])
+            )
+        diversity_block = (
+            "\n\nDIVERSITY REQUIREMENTS — strictly enforce:\n"
+            + "\n".join(parts)
+            + "\n\nEach new persona MUST differ in name, task goal AND constraint profile "
+            "from all entries above."
+        )
+
     user_prompt = PERSONA_GENERATION_USER.format(
         ui_context=ui_context,
         ui_analysis_json=ui_analysis.model_dump_json(indent=2),
         max_num_personas=settings.max_num_personas,
-    )
+    ) + diversity_block
 
     system_prompt = PERSONA_GENERATION_SYSTEM.format(
         max_num_personas=settings.max_num_personas,
     )
 
-    raw_json, error = _call_gemini(
+    raw_json, error = _call_supervisor_llm(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         task="persona_generation",
@@ -260,20 +307,20 @@ def _generate_personas(
 # Gemini call helper
 # ---------------------------------------------------------------------------
 
-def _call_gemini(
+def _call_supervisor_llm(
     system_prompt: str,
     user_prompt: str,
     task: str,
 ) -> tuple[str, str | None]:
     """
-    Single Groq API call using the supervisor's dedicated API key and model.
-    Runs Llama-3-70B via Groq for fast, high-quality structured JSON output.
+    Single OpenAI API call using the supervisor's dedicated API key and model.
+    Uses gpt-4.1 with json_object response_format for guaranteed structured JSON output.
     Returns (raw_json_string, error_message).
     """
     try:
-        client = Groq(api_key=settings.supervisor_api_key)
+        client = OpenAI(api_key=settings.supervisor_api_key)
 
-        logger.info(f"supervisor.groq_call.{task}.start",
+        logger.info(f"supervisor.openai_call.{task}.start",
                     model=settings.supervisor_llm_model)
 
         response = client.chat.completions.create(
@@ -289,7 +336,7 @@ def _call_gemini(
 
         raw = response.choices[0].message.content.strip()
 
-        # Defensive strip of markdown fences
+        # Defensive strip of markdown fences (not expected with json_object, but safe)
         if raw.startswith("```"):
             lines = raw.splitlines()
             raw = "\n".join(
@@ -297,12 +344,12 @@ def _call_gemini(
                 if not line.strip().startswith("```")
             ).strip()
 
-        logger.info(f"supervisor.groq_call.{task}.complete", chars=len(raw))
+        logger.info(f"supervisor.openai_call.{task}.complete", chars=len(raw))
         return raw, None
 
     except Exception as e:
-        logger.error(f"supervisor.groq_call.{task}.error", error=str(e))
-        return "", f"Groq call failed ({task}): {e}"
+        logger.error(f"supervisor.openai_call.{task}.error", error=str(e))
+        return "", f"OpenAI call failed ({task}): {e}"
 
 
 # ===========================================================================
@@ -432,36 +479,6 @@ def recommender_profile_node(state: GraphState) -> dict:
 # Step 1: Trace verification
 # ---------------------------------------------------------------------------
 
-def _format_action_trace(result) -> str:
-    """Format a persona's action trace as readable text for the LLM."""
-    lines = []
-    for step in result.action_trace:
-        status = "OK" if step.success else "FAIL"
-        lines.append(
-            f"  Step {step.step_number} [{status}] {step.action_type}"
-            + (f" → {step.target_selector}" if step.target_selector else "")
-            + (f" value={step.value!r}" if step.value else "")
-        )
-        if step.reasoning:
-            lines.append(f"    reasoning: {step.reasoning[:120]}")
-        if step.error_message:
-            lines.append(f"    error: {step.error_message[:120]}")
-    return "\n".join(lines) if lines else "  (no steps)"
-
-
-def _format_issues_text(result) -> str:
-    """Format a persona's issues as readable text for the LLM."""
-    if not result.issues:
-        return "  (no issues reported)"
-    lines = []
-    for iss in result.issues:
-        lines.append(
-            f"  [{iss.issue_id}] step={iss.step_number} "
-            f"sev={iss.severity} cat={iss.category}\n"
-            f"    title: {iss.title}\n"
-            f"    element: {iss.affected_element or 'n/a'}"
-        )
-    return "\n".join(lines)
 
 
 def _verify_traces(
@@ -691,7 +708,7 @@ def _generate_recommender_profiles(
         num_clusters=len(clusters),
     )
 
-    raw, error = _call_gemini(
+    raw, error = _call_supervisor_llm(
         system_prompt=RECOMMENDER_PROFILE_SYSTEM,
         user_prompt=user,
         task="recommender_profiles",
@@ -703,16 +720,21 @@ def _generate_recommender_profiles(
 
     try:
         data = json.loads(raw)
-        # Unwrap {"profiles": [...]} if needed
+        # Unwrap {"profiles": [...]} or {"profiles": "[...]"} if needed
         if isinstance(data, dict):
+            # Pick the first value — typically "profiles", "recommenders", etc.
             data = next(iter(data.values()))
+        # GPT-4 occasionally double-encodes: the value is a JSON string, not a list
+        if isinstance(data, str):
+            data = json.loads(data)
         if not isinstance(data, list):
-            raise ValueError(f"Expected list, got {type(data)}")
+            raise ValueError(f"Expected list, got {type(data)}: {str(data)[:200]}")
 
         profiles = []
         for i, item in enumerate(data):
             profiles.append(RecommenderProfile(
                 recommender_id=item.get("recommender_id", f"rec_{i+1}"),
+                recommender_name=item.get("recommender_name", f"Agent-{i+1}"),
                 cluster_id=item.get("cluster_id", f"cluster_{i+1}"),
                 cluster_label=item.get("cluster_label", ""),
                 focus=RecommenderFocus(item.get("focus", "mixed")),
@@ -721,6 +743,7 @@ def _generate_recommender_profiles(
                 affected_elements=item.get("affected_elements", []),
                 wcag_references=item.get("wcag_references", []),
                 fix_strategy_hint=item.get("fix_strategy_hint", ""),
+                num_recommenders=int(item.get("num_recommenders", 1)),
                 priority=int(item.get("priority", i + 1)),
             ))
         return profiles
@@ -736,9 +759,14 @@ def _fallback_recommender_profiles(clusters: list) -> list[RecommenderProfile]:
         "accessibility": "accessibility", "usability": "usability",
         "navigation": "navigation", "form": "form", "clarity": "clarity",
     }
+    _focus_names = {
+        "accessibility": "AriaFixer", "usability": "UsabilityBot",
+        "navigation": "NavSentinel", "form": "FormGuard", "clarity": "ClarityBot",
+    }
     return [
         RecommenderProfile(
             recommender_id=f"rec_{i+1}",
+            recommender_name=_focus_names.get(str(c.dominant_category), f"Agent-{i+1}"),
             cluster_id=c.cluster_id,
             cluster_label=c.cluster_label,
             focus=RecommenderFocus(_cat_focus.get(str(c.dominant_category), "mixed")),
@@ -751,6 +779,7 @@ def _fallback_recommender_profiles(clusters: list) -> list[RecommenderProfile]:
                 f"and propose targeted HTML fixes for: "
                 f"{', '.join(c.affected_elements[:3]) or 'affected elements'}."
             ),
+            num_recommenders=min(max(1, c.issue_count // 4), 4),
             priority=i + 1,
         )
         for i, c in enumerate(clusters)

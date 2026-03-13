@@ -117,7 +117,7 @@ class PersonaRunner:
             logger.error("persona.fatal_error",
                          persona_id=self.persona.persona_id, error=str(e))
             stop_reason = StopReason.DEAD_END
-            self.issues.append(_make_fatal_issue(self.persona, str(e)))
+            self.issues.append(_make_fatal_issue(self.persona, str(e), UI_page=self.state.get("html_source_path", "")))
 
         finally:
             if sandbox_path:
@@ -197,7 +197,7 @@ class PersonaRunner:
                         f"Agent scrolled {consecutive_scrolls} times without finding target. "
                         f"Page was {page_state.scroll_pct}% scrolled. "
                         f"Hidden sections present: {[s['id'] for s in page_state.hidden_sections]}",
-                    ))
+                        UI_page=self.state.get("html_source_path", "")))
                     return StopReason.DEAD_END
 
                 # DECIDE
@@ -350,6 +350,7 @@ class PersonaRunner:
                     affected_element_html=item.get("affected_element_html", result.element_html),
                     step_number=step_num,
                     page_context=page_state.visible_text[:300],
+                    UI_page=item.get("UI_page") or self.state.get("html_source_path", ""),
                     reproduction_steps=item.get("reproduction_steps", []),
                     persona_impact=item.get("persona_impact", ""),
                 ))
@@ -598,6 +599,7 @@ class PersonaRunner:
                 affected_element_html=result.element_html,
                 step_number=step_num,
                 page_context=result.new_url or "",
+                UI_page=inline.get("UI_page") or self.state.get("html_source_path", ""),
                 reproduction_steps=[],
                 persona_impact=inline.get("persona_impact", ""),
             ))
@@ -642,7 +644,7 @@ def _default_experience(
     )
 
 
-def _make_navigation_issue(persona: PersonaProfile, step: int, detail: str) -> IssueReport:
+def _make_navigation_issue(persona: PersonaProfile, step: int, detail: str, UI_page: str = "") -> IssueReport:
     """Issue raised when the agent gets stuck scrolling instead of navigating."""
     return IssueReport(
         issue_id=f"{persona.persona_id}_nav_stagnation_{step}",
@@ -659,6 +661,7 @@ def _make_navigation_issue(persona: PersonaProfile, step: int, detail: str) -> I
         ),
         step_number=step,
         page_context="",
+        UI_page=UI_page,
         reproduction_steps=[
             "Open the page",
             f"Try to find the section as persona '{persona.name}' ({persona.technical_skill} skill)",
@@ -671,7 +674,7 @@ def _make_navigation_issue(persona: PersonaProfile, step: int, detail: str) -> I
     )
 
 
-def _make_fatal_issue(persona: PersonaProfile, error: str) -> IssueReport:
+def _make_fatal_issue(persona: PersonaProfile, error: str, UI_page: str = "") -> IssueReport:
     return IssueReport(
         issue_id=f"{persona.persona_id}_fatal",
         persona_id=persona.persona_id,
@@ -682,6 +685,7 @@ def _make_fatal_issue(persona: PersonaProfile, error: str) -> IssueReport:
         description=f"The simulation failed with an unrecoverable error: {error}",
         step_number=0,
         page_context="",
+        UI_page=UI_page,
         reproduction_steps=["Run the simulation"],
         persona_impact="Persona could not interact with the UI at all.",
     )
