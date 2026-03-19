@@ -24,6 +24,11 @@ Stop conditions (any one ends the loop):
   - dead_end        : LLM has no valid next action
   - max_steps       : step count >= settings.persona_max_steps
   - repeated_action : same (action_type, selector) pair seen twice
+
+Rate limiting:
+  All LLM calls go through groq_chat_completion() in utils/rate_limiter.py.
+  The semaphore + shared backoff event handle parallel persona threads safely —
+  multiple personas run concurrently but never exceed the Groq RPM ceiling.
 """
 
 from __future__ import annotations
@@ -33,9 +38,8 @@ import time
 import uuid
 from typing import Optional
 
-from groq import Groq
-
 from config.settings import settings
+from tools.rate_limiter import groq_chat_completion
 from core.state import GraphState
 from schemas.persona_schema import PersonaProfile
 from schemas.issue_schema import (
@@ -59,7 +63,7 @@ logger = get_logger(__name__)
 # LangGraph node entry point
 # ---------------------------------------------------------------------------
 
-def persona_node(state: GraphState) -> dict:
+def persona_node(state: dict) -> dict:
     """
     LangGraph node. Receives state with 'current_persona' injected by Send().
     Returns simulation result appended to simulation_results via operator.add.
@@ -88,13 +92,13 @@ def persona_node(state: GraphState) -> dict:
 
 class PersonaRunner:
 
-    def __init__(self, persona: PersonaProfile, state: GraphState):
+    def __init__(self, persona: PersonaProfile, state: dict):
         self.persona   = persona
         self.state     = state
         self.steps:    list[ActionStep]  = []
         self.issues:   list[IssueReport] = []
         self._seen_actions: set[tuple]   = set()  # repeat-action guard
-        self._ui_map:  Optional[dict]    = None   # set by _understand_page before loop
+        self._ui_map:  Optional[dict]    = None
         self._ui_map_summary: str        = "(UI map not yet loaded)"
 
     # ------------------------------------------------------------------
@@ -104,26 +108,26 @@ class PersonaRunner:
     def run(self) -> PersonaSimulationResult:
         sandbox_path = None
         try:
-            # 1. Build sandbox
             sandbox_path, _ = build_sandbox(
                 html_content=self.state["html_content"],
                 persona=self.persona,
                 html_source_path=self.state["html_source_path"],
             )
-            # 2. Run loop inside browser context
             stop_reason = self._simulation_loop(sandbox_path)
 
         except Exception as e:
             logger.error("persona.fatal_error",
                          persona_id=self.persona.persona_id, error=str(e))
             stop_reason = StopReason.DEAD_END
-            self.issues.append(_make_fatal_issue(self.persona, str(e), UI_page=self.state.get("html_source_path", "")))
+            self.issues.append(_make_fatal_issue(
+                self.persona, str(e),
+                UI_page=self.state.get("html_source_path", "")
+            ))
 
         finally:
             if sandbox_path:
                 cleanup_sandbox(sandbox_path)
 
-        # 3. Final completion check (only if loop ended normally)
         task_completed, confidence, experience, blocker = False, 0.0, "", None
         if self.steps:
             task_completed, confidence, experience, blocker = self._check_completion()
@@ -154,74 +158,49 @@ class PersonaRunner:
         with PlaywrightEngine(self.persona.persona_id) as engine:
             engine.open(sandbox_path, storage_seed=self.state.get("storage_seed"))
 
-            # ── Mandatory page understanding before first action ──────────
-            # The agent reads the full page and produces a UI map it will
-            # use throughout the loop. This prevents URL hallucination.
             initial_state = engine.get_page_state()
             self._understand_page(initial_state)
 
-            consecutive_scrolls = 0   # scroll stagnation guard
+            consecutive_scrolls = 0
             last_scroll_y       = -1
 
             for step_num in range(1, settings.persona_max_steps + 1):
-                # PERCEIVE
                 page_state = engine.get_page_state()
 
-                # SCROLL STAGNATION GUARD
-                # If agent has scrolled 4+ times in a row without the page
-                # changing position (or reaching the bottom), force a dead_end.
-                # This is the root cause of the 30-scroll trace.
+                # Scroll stagnation guard
                 current_y = page_state.scroll_position.get("y", 0)
                 if action_type_last := getattr(self, "_last_action_type", None):
                     if action_type_last == "scroll":
-                        if current_y == last_scroll_y:
-                            # Page didn't move — already at top or bottom
-                            consecutive_scrolls += 2   # punish harder for no movement
-                        else:
-                            consecutive_scrolls += 1
+                        consecutive_scrolls += 2 if current_y == last_scroll_y else 1
                     else:
                         consecutive_scrolls = 0
                 last_scroll_y = current_y
 
                 if consecutive_scrolls >= 4:
-                    logger.info(
-                        "persona.scroll_stagnation",
-                        persona_id=self.persona.persona_id,
-                        step=step_num,
-                        consecutive=consecutive_scrolls,
-                        scroll_pct=page_state.scroll_pct,
-                    )
-                    # Inject a synthetic dead_end so the agent reports a navigation issue
+                    logger.info("persona.scroll_stagnation",
+                                persona_id=self.persona.persona_id, step=step_num)
                     self.issues.append(_make_navigation_issue(
                         self.persona, step_num,
-                        f"Agent scrolled {consecutive_scrolls} times without finding target. "
-                        f"Page was {page_state.scroll_pct}% scrolled. "
-                        f"Hidden sections present: {[s['id'] for s in page_state.hidden_sections]}",
+                        f"Agent scrolled {consecutive_scrolls} times without finding target.",
                         UI_page=self.state.get("html_source_path", "")))
                     return StopReason.DEAD_END
 
-                # DECIDE
                 decision = self._decide(step_num, page_state)
                 if decision is None:
                     return StopReason.DEAD_END
 
                 action_type = decision.get("action_type", "observe")
-                self._last_action_type = action_type  # track for stagnation guard
+                self._last_action_type = action_type
                 selector    = decision.get("target_selector")
                 value       = decision.get("value")
                 stop_signal = decision.get("stop_signal")
                 inline_issue = decision.get("issue_detected")
 
-                # INTERCEPT navigate — the agent must not guess URLs.
-                # Redirect it: fail the step with a clear error so it learns
-                # to use click on nav links instead.
+                # Intercept navigate — force click on nav links instead
                 if action_type == "navigate":
-                    logger.info(
-                        "persona.navigate_intercepted",
-                        persona_id=self.persona.persona_id,
-                        step=step_num,
-                        value=value,
-                    )
+                    logger.info("persona.navigate_intercepted",
+                                persona_id=self.persona.persona_id,
+                                step=step_num, value=value)
                     fake_result = ActionResult(
                         False, "navigate", None, value,
                         error_message=(
@@ -233,12 +212,11 @@ class PersonaRunner:
                     self._record_step(step_num, decision, page_state, fake_result)
                     deep_issues = self._analyze_failure(step_num, decision, fake_result, page_state)
                     self.issues.extend(deep_issues)
-                    continue  # give the agent another chance
+                    continue
 
-                # VALIDATE — stop signals
                 if stop_signal == "goal_achieved":
-                    self._record_step(step_num, decision, page_state, ActionResult(
-                        True, action_type, selector, value))
+                    self._record_step(step_num, decision, page_state,
+                                      ActionResult(True, action_type, selector, value))
                     return StopReason.GOAL_ACHIEVED
 
                 if stop_signal == "dead_end":
@@ -248,7 +226,6 @@ class PersonaRunner:
                         self._record_inline_issue(step_num, inline_issue, selector, result)
                     return StopReason.DEAD_END
 
-                # VALIDATE — repeat-action guard
                 action_key = (action_type, selector)
                 if action_key in self._seen_actions and action_type not in ("scroll", "observe"):
                     self._record_step(step_num, decision, page_state, ActionResult(
@@ -257,15 +234,12 @@ class PersonaRunner:
                     return StopReason.REPEATED_ACTION
                 self._seen_actions.add(action_key)
 
-                # ACT
                 result = engine.execute_action(action_type, selector, value)
                 self._record_step(step_num, decision, page_state, result)
 
-                # Inline issue from decision prompt
                 if inline_issue:
                     self._record_inline_issue(step_num, inline_issue, selector, result)
 
-                # Deep issue analysis on failure
                 if not result.success:
                     deep_issues = self._analyze_failure(step_num, decision, result, page_state)
                     self.issues.extend(deep_issues)
@@ -273,11 +247,59 @@ class PersonaRunner:
             return StopReason.MAX_STEPS
 
     # ------------------------------------------------------------------
-    # LLM calls
+    # LLM calls — all routed through groq_chat_completion
     # ------------------------------------------------------------------
 
+    def _call_llm(
+        self,
+        system: str,
+        user:   str,
+        label:  str,
+        expect_array: bool = False,
+    ) -> Optional[dict | list]:
+        """
+        Single LLM call for the persona agent.
+        Uses groq_chat_completion — thread-safe semaphore + shared backoff.
+        Retries are handled internally by groq_chat_completion.
+        """
+        raw, error = groq_chat_completion(
+            api_key     = settings.persona_api_key,
+            model       = settings.persona_llm_model,
+            messages    = [
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user},
+            ],
+            temperature = settings.persona_temperature,
+            max_tokens  = getattr(settings, 'persona_max_tokens', settings.llm_max_output_tokens),
+            task        = f"persona.{label}.{self.persona.persona_id}",
+        )
+
+        if error:
+            logger.warning(f"persona.llm.{label}.error",
+                           persona_id=self.persona.persona_id, error=error)
+            return None
+
+        try:
+            text = raw.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            parsed = json.loads(text)
+
+            if expect_array and not isinstance(parsed, list):
+                parsed = [parsed] if isinstance(parsed, dict) else []
+            elif not expect_array and not isinstance(parsed, dict):
+                raise ValueError(f"Expected dict, got {type(parsed)}")
+
+            return parsed
+
+        except Exception as e:
+            logger.warning(f"persona.llm.{label}.parse_error",
+                           persona_id=self.persona.persona_id, error=str(e))
+            return None
+
     def _decide(self, step_num: int, page_state: DOMState) -> Optional[dict]:
-        """Call LLM to decide the next action. Returns parsed JSON dict or None."""
         system = DECISION_SYSTEM.format(
             persona_name=self.persona.name,
             age_range=self.persona.age_range,
@@ -312,13 +334,11 @@ class PersonaRunner:
         result: ActionResult,
         page_state: DOMState,
     ) -> list[IssueReport]:
-        """Deep issue analysis after a failed action."""
         constraints = (
             ", ".join(self.persona.accessibility_constraints)
             if self.persona.accessibility_constraints else "none"
         )
-        system = ISSUE_DETECTION_SYSTEM
-        user   = ISSUE_DETECTION_USER.format(
+        user = ISSUE_DETECTION_USER.format(
             persona_name=self.persona.name,
             technical_skill=self.persona.technical_skill,
             accessibility_constraints=constraints,
@@ -330,7 +350,8 @@ class PersonaRunner:
             element_html=result.element_html or "(not found)",
             page_state_summary=page_state.to_prompt_string()[:600],
         )
-        raw = self._call_llm(system, user, label="issue_analysis", expect_array=True)
+        raw = self._call_llm(ISSUE_DETECTION_SYSTEM, user,
+                             label="issue_analysis", expect_array=True)
         if not isinstance(raw, list):
             return []
 
@@ -360,21 +381,21 @@ class PersonaRunner:
         return reports
 
     def _check_completion(self) -> tuple[bool, float, str, Optional[str]]:
-        """Final LLM call to evaluate task completion after the loop ends."""
-        # Build a minimal page state from last known step
-        last_step = self.steps[-1] if self.steps else None
+        last_step    = self.steps[-1] if self.steps else None
         page_summary = last_step.page_state_summary if last_step else "unknown"
-        action_summary = _format_action_history(self.steps[-5:])  # last 5 steps
+        action_summary = _format_action_history(self.steps[-5:])
 
-        system = COMPLETION_CHECK_SYSTEM
-        user   = COMPLETION_CHECK_USER.format(
-            persona_name=self.persona.name,
-            task_goal=self.persona.task_goal,
-            success_criteria="\n".join(f"- {c}" for c in self.persona.success_criteria),
-            page_dom_summary=page_summary,
-            action_summary=action_summary,
+        result = self._call_llm(
+            COMPLETION_CHECK_SYSTEM,
+            COMPLETION_CHECK_USER.format(
+                persona_name=self.persona.name,
+                task_goal=self.persona.task_goal,
+                success_criteria="\n".join(f"- {c}" for c in self.persona.success_criteria),
+                page_dom_summary=page_summary,
+                action_summary=action_summary,
+            ),
+            label="completion_check",
         )
-        result = self._call_llm(system, user, label="completion_check")
         if not result:
             return False, 0.0, "", None
 
@@ -387,67 +408,44 @@ class PersonaRunner:
 
     def _understand_page(self, page_state: DOMState) -> None:
         """
-        Called ONCE before the decision loop. The LLM reads the full page
-        and produces a UI map — all sections, their activate_via selectors,
-        and the recommended first step.
-
-        The result is stored in self._ui_map and self._ui_map_summary.
-        On failure we fall back to a plain-text summary so the loop can still run.
+        Called ONCE before the decision loop.
+        Produces a UI map the agent uses throughout — prevents URL hallucination.
         """
-        # Pre-check: detect redirected/broken pages before calling the LLM.
-        # If the page has no interactive elements and is not the expected URL,
-        # it's likely an auth-guard redirect to a missing file (e.g. index.html).
         interactive_count = len(page_state.interactive_elements)
-        is_error_page = (
-            interactive_count == 0
-            and "file://" in page_state.url
-            and page_state.url != (self.state.get("html_source_path") or "")
-        )
+
         if interactive_count == 0:
-            logger.warning(
-                "persona.empty_page_detected",
-                persona_id=self.persona.persona_id,
-                url=page_state.url,
-                title=page_state.page_title,
-                hint=(
-                    "Page has no interactive elements. "
-                    "Possible auth-guard redirect — check storage_seed in supervisor output."
-                ),
-            )
+            logger.warning("persona.empty_page_detected",
+                           persona_id=self.persona.persona_id,
+                           url=page_state.url)
             self._ui_map = {}
             self._ui_map_summary = (
                 f"WARNING: The page loaded at {page_state.url!r} has NO interactive elements. "
-                "This is likely an error page caused by an auth-guard redirect (e.g. "
-                "localStorage check). You cannot interact with this page. "
                 "Signal dead_end immediately and report a critical navigation issue."
             )
             return
 
-        user = PAGE_UNDERSTANDING_USER.format(
-            persona_name=self.persona.name,
-            technical_skill=self.persona.technical_skill,
-            task_goal=self.persona.task_goal,
-            page_dom_summary=page_state.to_prompt_string(),
-        )
         result = self._call_llm(
-            PAGE_UNDERSTANDING_SYSTEM, user, label="understand_page"
+            PAGE_UNDERSTANDING_SYSTEM,
+            PAGE_UNDERSTANDING_USER.format(
+                persona_name=self.persona.name,
+                technical_skill=self.persona.technical_skill,
+                task_goal=self.persona.task_goal,
+                page_dom_summary=page_state.to_prompt_string(),
+            ),
+            label="understand_page",
         )
 
         if not result:
-            logger.warning(
-                "persona.understand_page_failed",
-                persona_id=self.persona.persona_id,
-            )
+            logger.warning("persona.understand_page_failed",
+                           persona_id=self.persona.persona_id)
             self._ui_map = {}
             self._ui_map_summary = (
-                "(page understanding failed — proceed with caution, "
-                "only use selectors visible in INTERACTIVE ELEMENTS)"
+                "(page understanding failed — use selectors from INTERACTIVE ELEMENTS only)"
             )
             return
 
         self._ui_map = result
 
-        # Build a compact text summary to inject into every decision prompt
         lines = [
             f"page_type      : {result.get('page_type', '?')}",
             f"navigation     : {result.get('navigation_model', '?')}",
@@ -473,79 +471,10 @@ class PersonaRunner:
             )
 
         self._ui_map_summary = "\n".join(lines)
-        logger.info(
-            "persona.page_understood",
-            persona_id=self.persona.persona_id,
-            page_type=result.get("page_type"),
-            sections=len(result.get("available_sections", [])),
-            first_step=result.get("first_step", "")[:80],
-        )
-
-    def _call_llm(
-        self,
-        system: str,
-        user: str,
-        label: str,
-        expect_array: bool = False,
-    ) -> Optional[dict | list]:
-        """
-        Call the persona LLM via Groq.
-        Returns parsed JSON dict/list or None on failure.
-        Retries up to settings.llm_max_retries times with exponential backoff.
-        """
-        client = Groq(api_key=settings.persona_api_key)
-
-        for attempt in range(1, settings.llm_max_retries + 1):
-            try:
-                logger.debug(
-                    f"persona.llm.{label}",
+        logger.info("persona.page_understood",
                     persona_id=self.persona.persona_id,
-                    model=settings.persona_llm_model,
-                    attempt=attempt,
-                )
-                response = client.chat.completions.create(
-                    model=settings.persona_llm_model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user",   "content": user},
-                    ],
-                    temperature=settings.persona_temperature,
-                    max_tokens=settings.llm_max_output_tokens,
-                    response_format={"type": "json_object"},
-                )
-
-                text = response.choices[0].message.content.strip()
-
-                # Strip accidental markdown fences (some models still add them)
-                if text.startswith("```"):
-                    text = text.split("```")[1]
-                    if text.startswith("json"):
-                        text = text[4:]
-
-                parsed = json.loads(text)
-
-                if expect_array and not isinstance(parsed, list):
-                    parsed = [parsed] if isinstance(parsed, dict) else []
-                elif not expect_array and not isinstance(parsed, dict):
-                    raise ValueError(f"Expected dict, got {type(parsed)}")
-
-                return parsed
-
-            except Exception as e:
-                logger.warning(
-                    f"persona.llm.{label}.error",
-                    persona_id=self.persona.persona_id,
-                    attempt=attempt,
-                    error=str(e),
-                )
-                if attempt < settings.llm_max_retries:
-                    time.sleep(settings.llm_retry_delay_seconds * (2 ** (attempt - 1)))
-
-        logger.error(
-            f"persona.llm.{label}.all_retries_failed",
-            persona_id=self.persona.persona_id,
-        )
-        return None
+                    page_type=result.get("page_type"),
+                    sections=len(result.get("available_sections", [])))
 
     # ------------------------------------------------------------------
     # Recording helpers
@@ -560,7 +489,6 @@ class PersonaRunner:
     ) -> None:
         issue_id = None
         if self.issues:
-            # Link the most recent issue to this step
             last = self.issues[-1]
             if last.step_number == step_num:
                 issue_id = last.issue_id
@@ -585,7 +513,6 @@ class PersonaRunner:
         selector: Optional[str],
         result: ActionResult,
     ) -> None:
-        """Record an issue that was flagged inline in the decision response."""
         try:
             self.issues.append(IssueReport(
                 issue_id=f"{self.persona.persona_id}_issue_{len(self.issues) + 1}",
@@ -644,8 +571,12 @@ def _default_experience(
     )
 
 
-def _make_navigation_issue(persona: PersonaProfile, step: int, detail: str, UI_page: str = "") -> IssueReport:
-    """Issue raised when the agent gets stuck scrolling instead of navigating."""
+def _make_navigation_issue(
+    persona: PersonaProfile,
+    step: int,
+    detail: str,
+    UI_page: str = "",
+) -> IssueReport:
     return IssueReport(
         issue_id=f"{persona.persona_id}_nav_stagnation_{step}",
         persona_id=persona.persona_id,
@@ -656,8 +587,7 @@ def _make_navigation_issue(persona: PersonaProfile, step: int, detail: str, UI_p
         title="Content not discoverable — agent resorted to repeated scrolling",
         description=(
             f"The agent could not find the target section through normal navigation "
-            f"and got stuck scrolling. This indicates the navigation affordance is "
-            f"unclear or not perceivable. Detail: {detail}"
+            f"and got stuck scrolling. Detail: {detail}"
         ),
         step_number=step,
         page_context="",
@@ -669,12 +599,16 @@ def _make_navigation_issue(persona: PersonaProfile, step: int, detail: str, UI_p
         ],
         persona_impact=(
             f"{persona.name} could not complete their goal because they could not "
-            f"discover the correct navigation mechanism to reach the target section."
+            f"discover the correct navigation mechanism."
         ),
     )
 
 
-def _make_fatal_issue(persona: PersonaProfile, error: str, UI_page: str = "") -> IssueReport:
+def _make_fatal_issue(
+    persona: PersonaProfile,
+    error: str,
+    UI_page: str = "",
+) -> IssueReport:
     return IssueReport(
         issue_id=f"{persona.persona_id}_fatal",
         persona_id=persona.persona_id,

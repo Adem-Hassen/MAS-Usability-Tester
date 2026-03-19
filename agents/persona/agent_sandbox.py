@@ -1,4 +1,3 @@
-# agents/persona/html_sandbox.py
 
 from __future__ import annotations
 
@@ -13,9 +12,6 @@ from monitoring.logger import get_logger
 logger = get_logger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def build_sandbox(
     html_content: str,

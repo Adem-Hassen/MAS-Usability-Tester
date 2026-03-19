@@ -1,25 +1,3 @@
-# agents/persona/playwright_engine.py
-"""
-Playwright Engine.
-
-Manages one isolated Chromium browser context per persona.
-Exposes three operations used by the Perceive → Decide → Act loop:
-
-  open(sandbox_path)   — launch browser, load sandboxed HTML
-  get_page_state()     — return DOMState snapshot of what is visible
-  execute_action(...)  — run one action, return ActionResult
-  close()              — tear down context and browser
-
-Design:
-  - One BrowserContext per persona = fully isolated cookies, storage, JS heap.
-    Parallel personas cannot interfere with each other.
-  - Page state uses a compact structured summary (not raw HTML) to keep
-    LLM decision prompts small. The LLM sees visible elements + text.
-  - execute_action() never raises. All Playwright errors are caught and
-    returned in ActionResult.success=False so the agent loop handles them.
-  - Screenshots taken after every action (base64 PNG) for debug traces.
-  - JS alerts are auto-dismissed and captured so they don't block the loop.
-"""
 
 from __future__ import annotations
 
