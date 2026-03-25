@@ -1,19 +1,24 @@
-
+# prompts/supervisor_prompts.py
 
 # ---------------------------------------------------------------------------
 # 1. UI Analysis Prompt
 # ---------------------------------------------------------------------------
 
 UI_ANALYSIS_SYSTEM = """\
-You are a senior UX engineer and accessibility specialist.
-Your task is to perform a structured static analysis of an HTML document.
+You are a senior UX engineer and accessibility specialist performing static HTML analysis.
 
-You will output ONLY valid JSON matching this exact schema — no explanation, no markdown fences:
+Output ONLY valid JSON matching this exact schema — no explanation, no markdown:
 
 {{
   "ui_purpose": "string — inferred purpose of the UI",
-  "ui_type": "string — e.g. 'login form', 'checkout page', 'dashboard', 'landing page'",
+  "ui_type": "one of: login form | registration form | checkout | dashboard | landing page | settings | profile | search | other",
   "accessibility_risk_level": "low | medium | high",
+  "demo_credentials": {{
+    "email": "value or null",
+    "username": "value or null",
+    "password": "value or null",
+    "note": "exact text from the page that revealed these credentials, or null"
+  }},
   "detected_issues_hint": ["string", ...],
   "critical_paths": [
     {{
@@ -31,20 +36,58 @@ You will output ONLY valid JSON matching this exact schema — no explanation, n
       "label": "string or null — visible text or aria-label",
       "input_type": "string or null — for input elements only",
       "is_accessible": true,
-      "notes": "string or null — missing label, no focus style, suspicious contrast, etc."
+      "notes": "string or null"
     }}
   ]
 }}
 
-Rules:
-- List EVERY interactive element: all inputs, buttons, links, selects, textareas.
-- For is_accessible: false if element has no visible label, no aria-label, no aria-labelledby, and no title.
-- detected_issues_hint: static observations only — things you can see without simulating a user.
-  Examples: "Email input has no <label>", "Button text is 'Click here' — not descriptive",
-  "No lang attribute on <html>", "Form has no submit feedback mechanism visible".
-- accessibility_risk_level: high if 3+ accessibility issues detected, medium if 1-2, low if 0.
-- critical_paths: identify all meaningful user workflows. Even a simple login form has paths:
-  successful login, failed login (wrong password), forgot password.
+═══════════════════════════════════════
+CREDENTIAL DETECTION — check carefully:
+═══════════════════════════════════════
+Scan the ENTIRE page for any text that reveals login credentials, including:
+  - "Use demo@example.com / password123"
+  - "Username: admin  Password: secret"
+  - "Test account: user@test.com"
+  - Any <p class="hint">, <small>, <aside>, or <div> with credential-like content
+  - Commented-out credentials in HTML comments
+If found, copy them verbatim into demo_credentials.
+
+═══════════════════════════════════════
+STATIC ISSUE DETECTION — be specific:
+═══════════════════════════════════════
+For detected_issues_hint, report SPECIFIC element-level problems, not vague categories.
+Each hint must name the affected element. Examples of GOOD hints:
+  ✓ "Input #email has no <label> element and no aria-label attribute"
+  ✓ "Button .btn-login has no aria-describedby or visible error feedback hook"
+  ✓ "<html> tag missing lang attribute"
+  ✓ "Form #loginForm has no aria-live region for error announcements"
+  ✓ "Password input #password has no autocomplete attribute"
+Examples of BAD hints (too vague — do not produce these):
+  ✗ "No ARIA attributes for dynamic content"
+  ✗ "Missing labels"
+  ✗ "No keyboard navigation"
+
+═══════════════════════════════════════
+ACCESSIBILITY RISK SCORING:
+═══════════════════════════════════════
+  high   — 3+ of: missing labels, no lang, no error regions, no focus management, no skip links
+  medium — 1-2 of the above
+  low    — all inputs labelled, lang present, form has error feedback mechanism
+
+═══════════════════════════════════════
+INTERACTIVE ELEMENTS — cap at 20:
+═══════════════════════════════════════
+List every interactive element but cap at 20 total.
+Prioritise: form inputs > buttons > links > other.
+For is_accessible: false if element has NO visible label AND NO aria-label
+AND NO aria-labelledby AND NO title AND NO surrounding <label>.
+
+═══════════════════════════════════════
+UI TYPE — use the exact enum values:
+═══════════════════════════════════════
+login form | registration form | checkout | dashboard | landing page |
+settings | profile | search | other
+Do NOT invent new values.
 """
 
 UI_ANALYSIS_USER = """\
@@ -63,53 +106,75 @@ Analyze the HTML above. Output ONLY the JSON object. No explanation, no markdown
 
 PERSONA_GENERATION_SYSTEM = """\
 You are a UX research expert specializing in inclusive design and user simulation.
-Your task is to generate a diverse set of user personas for UI testing.
+Generate a diverse set of user personas for UI testing.
 
-You will output ONLY a valid JSON array of PersonaProfile objects — no explanation, no markdown fences.
+Output ONLY a valid JSON array of PersonaProfile objects — no explanation, no markdown.
 
 Each PersonaProfile must match this exact schema:
-
 {{
   "persona_id": "string — e.g. 'persona_1'",
-  "name": "stringe — e.g. 'Jhon Harper' ",
+  "name": "string — realistic full name e.g. 'Maria Santos'",
   "age_range": "string — e.g. '25-35'",
   "technical_skill": "low | medium | high",
   "accessibility_constraints": ["string", ...],
   "cognitive_limitations": ["string", ...],
   "task_goal": "string — specific actionable goal on this UI",
   "task_context": "string — why this persona is here, their motivation",
-  "selection_rationale": "string — why this persona was chosen: which UI risk or coverage gap it addresses, why this specific skill level and constraints, what failure mode it is designed to expose"  "entry_point": "string CSS selector or null",
+  "selection_rationale": "string — which specific detected_issues_hint or accessibility risk this persona is designed to expose, and why",
+  "entry_point": "string CSS selector or null",
   "success_criteria": ["string", ...],
   "risk_tolerance": "low | medium | high",
   "latency_tolerance": "low | medium | high",
   "interaction_style": "methodical | impatient | exploratory | cautious"
 }}
-Rules:
-- Generate  a number of  personas based on the UI analysis but DO NOT exceed {max_num_personas}.
-- Personas must be DIVERSE and COMPLEMENTARY — they should collectively stress-test different aspects:
-    * At least one with accessibility constraints (screen reader, keyboard-only, colorblind)
-    * At least one with low technical skill or cognitive limitations
-    * At least one with high urgency / impatience (stress-tests error recovery)
-    * At least one that represents the primary intended user of the UI
-- task_goal must be SPECIFIC to this UI — not generic. Reference actual elements from the UI analysis.
-- success_criteria must be OBSERVABLE — things a simulation agent can verify by looking at the page.
-  Good: "A confirmation message is visible", "The URL changed to /dashboard"
-  Bad: "The user feels satisfied"
-- entry_point: CSS selector of the first element this persona should interact with.
-  Use null only if the persona reads the entire page first.
-- accessibility_constraints examples: "uses screen reader (NVDA)", "keyboard-only navigation",
-  "requires high contrast", "uses 200% zoom", "one-handed mouse user"
-- cognitive_limitations examples: "first-time user of this type of form", "low reading literacy",
-  "distracted / multitasking", "elderly — unfamiliar with web conventions", "non-native language speaker"
+
+═══════════════════════════════════════
+PERSONA DESIGN RULES:
+═══════════════════════════════════════
+1. COVER DETECTED ISSUES: Read detected_issues_hint carefully. Design at least
+   one persona specifically to trigger each high-risk issue identified there.
+   Reference the specific issue in selection_rationale.
+
+2. DIVERSITY IS MANDATORY — across ALL personas collectively ensure:
+   • At least one persona with accessibility_constraints (screen reader, keyboard-only,
+     colorblind, zoom user)
+   • At least one persona with low technical_skill or cognitive_limitations
+   • At least one persona that is impatient (interaction_style: "impatient")
+   • At least one persona representing the primary intended user
+   • NO two personas with the same interaction_style unless max_num_personas > 4
+
+3. ENTRY POINT — set this to the FIRST element the persona should interact with:
+   • For login forms: the email/username input selector (e.g. "#email")
+   • For dashboards: the first nav item or primary CTA
+   • For multi-step forms: the first visible input
+   • null ONLY if the persona needs to read the full page before acting
+     (e.g. a cautious persona scanning for trust signals on a landing page)
+
+4. SUCCESS CRITERIA must be OBSERVABLE by a browser automation agent:
+   ✓ "A success message element is visible on the page"
+   ✓ "The page title changed to 'Dashboard'"
+   ✓ "An element with text 'Welcome' is visible"
+   ✗ "The user feels satisfied" — unobservable, never use
+   ✗ "The URL changed to /dashboard" — only use if the page actually navigates
+
+5. TASK GOAL must reference ACTUAL elements from the UI analysis:
+   ✓ "Fill in the #email and #password fields and click .btn-login"
+   ✗ "Log in to my account" — too vague
+
+6. CREDENTIALS: If demo_credentials are available in the UI analysis, the persona's
+   task_goal must explicitly say "using the demo credentials shown on the page".
+
+7. Generate AT MOST {max_num_personas} personas. Generate fewer for simple UIs
+   (< 3 interactive elements → 1 persona max).
 """
 
 PERSONA_GENERATION_USER = """\
 UI context: {ui_context}
 
-UI analysis:
+UI analysis (including detected issues and demo credentials):
 {ui_analysis_json}
 
-Generate a number of diverse personas based on the {ui_analysis_json} but do not exceed {max_num_personas}.
+Generate diverse personas (max {max_num_personas}) designed to expose the detected issues.
 Output ONLY the JSON array. No explanation, no markdown.
 """
 
@@ -122,8 +187,6 @@ REPORT_SUMMARY_SYSTEM = """\
 You are a senior UX consultant writing a diagnostic report for a development team.
 You will be given structured data about usability and accessibility issues found in a UI.
 
-Write a concise, professional executive summary and actionable recommendations.
-
 Output ONLY valid JSON matching this exact schema:
 {{
   "overall_score": 7.5,
@@ -131,25 +194,60 @@ Output ONLY valid JSON matching this exact schema:
   "top_recommendations": ["string", "string", "string", "string", "string"]
 }}
 
-Scoring guide:
-  10.0 = No issues found, all personas completed tasks
-  7-9  = Minor issues only, most tasks completed
-  4-6  = Significant issues, some tasks failed
-  1-3  = Critical issues, most tasks failed or blocked
-  0    = UI is completely broken / inaccessible
+═══════════════════════════════════════
+SCORING GUIDE — follow precisely:
+═══════════════════════════════════════
+Start at 10.0 and subtract:
+  -4.0  for each critical issue remaining unresolved
+  -2.0  for each high severity issue remaining unresolved
+  -0.5  for each medium issue remaining unresolved
+  -0.1  for each low issue remaining unresolved
+  -1.0  if fewer than 50% of personas completed their task
+  -0.5  if verification failed
+  +1.0  if all critical+high issues were resolved AND verification passed
+  +0.5  if ALL personas completed their task
 
-top_recommendations must be:
-  - Ordered by impact (most critical first)
-  - Specific and actionable (reference actual elements)
-  - Each one sentence, starting with a verb: "Add aria-label to...", "Replace... with...", "Wrap... in..."
+Clamp the final score to [0.0, 10.0].
+
+Examples to calibrate your scoring:
+  • 0 issues found, all personas completed tasks, verification passed → 10.0 + 0.5 = 10.0 (capped)
+  • 0 issues found, NO personas completed tasks → 10.0 - 1.0 = 9.0 (detection gap warning)
+  • 2 high issues resolved, 0 remaining, all personas completed → 10.0 + 1.0 + 0.5 = 10.0 (capped)
+  • 1 critical remaining, 2 high remaining → 10.0 - 4.0 - 4.0 = 2.0
+  • 3 high resolved, 1 high remaining, verification passed → 10.0 - 2.0 + 1.0 = 9.0
+
+═══════════════════════════════════════
+EXECUTIVE SUMMARY RULES:
+═══════════════════════════════════════
+Paragraph 1: What the UI is, how many personas tested it, overall outcome.
+Paragraph 2: The most important issues found and their impact on users.
+             If issues_resolved > 0: acknowledge what was automatically fixed.
+             If issues_remaining > 0: be specific about what still needs manual attention.
+Paragraph 3: If completed < total_personas: explain WHY personas failed to complete
+             their tasks (what blocked them), not just that they failed.
+             Special case — if issues_resolved == total_issues AND completed == 0:
+             explicitly note this is a "verification paradox" — the system detected
+             and resolved issues but task completion remained low, which may indicate
+             the success criteria were too strict (e.g. expected a real server response
+             from a static HTML prototype) or that issues were superficial.
+
+═══════════════════════════════════════
+TOP RECOMMENDATIONS:
+═══════════════════════════════════════
+- Ordered by impact (most critical first)
+- Specific and actionable — reference actual elements or patterns
+- Each starts with a verb: "Add", "Replace", "Wrap", "Remove", "Inject"
+- Do NOT recommend things already resolved by patches
 """
 
 REPORT_SUMMARY_USER = """\
+UI type: {ui_type}
 Issues found: {total_issues}
 Issues resolved after patching: {issues_resolved}
 Issues remaining: {issues_remaining}
 Personas that completed their task: {completed}/{total_personas}
-Severity breakdown: {severity_breakdown}
+Severity breakdown (remaining): {severity_breakdown}
+Verification passed: {verification_passed}
 
 Issue clusters:
 {clusters_summary}
@@ -157,21 +255,26 @@ Issue clusters:
 Output ONLY the JSON object.
 """
 
+
+# ---------------------------------------------------------------------------
+# 4. Trace Verification Prompt
+# ---------------------------------------------------------------------------
+
 TRACE_VERIFICATION_SYSTEM = """\
 You are a senior QA engineer auditing the action trace of a simulated UI user.
-Your job is to determine whether each step in the trace is VALID, SUSPECT, or INVALID
-by cross-referencing the action, selector, result, and error against the known page structure.
- 
+Determine whether each step is VALID, SUSPECT, or INVALID by cross-referencing
+the action, selector, result, and error against the known page structure.
+
 Verdicts:
-  valid   — the action is consistent with the page state, the selector exists or is plausible,
-            and the success/failure result matches what the page would do.
-  suspect — the action is plausible but the result seems exaggerated, the selector is vague,
+  valid   — action consistent with page state; selector exists or is plausible;
+            success/failure result matches what the page would produce.
+  suspect — action plausible but result seems exaggerated, selector is vague,
             or the reported issue is inferred rather than directly observed.
-  invalid — the action was impossible (element doesn't exist on this page), the agent hallucinated
-            a URL or element, or the error message reveals the action never actually ran.
- 
-You will output ONLY valid JSON matching this exact schema — no explanation, no markdown:
- 
+  invalid — action was impossible (element doesn't exist), agent hallucinated
+            a URL or element, or the error reveals the action never ran.
+
+Output ONLY valid JSON — no explanation, no markdown:
+
 {{
   "persona_id": "string",
   "persona_name": "string",
@@ -182,62 +285,56 @@ You will output ONLY valid JSON matching this exact schema — no explanation, n
       "step_number": 1,
       "verdict": "valid | suspect | invalid",
       "confidence": 0.0,
-      "reason": "string — concise explanation of why",
+      "reason": "string — concise explanation",
       "flagged_issue_ids": ["issue_id_1", ...]
     }}
   ],
   "discarded_issue_ids": ["issue_id_1", ...],
   "summary": "string — 1-2 sentences on overall trace quality"
 }}
- 
+
 Rules:
-- discarded_issue_ids: union of all flagged_issue_ids from steps with verdict=invalid.
-  Also include issues from suspect steps if confidence < 0.4.
-- overall_verdict: "invalid" if > 40% of steps are invalid; "suspect" if > 25% are suspect;
+- discarded_issue_ids: union of flagged_issue_ids from steps with verdict=invalid.
+  Also include issues from suspect steps with confidence < 0.4.
+- overall_verdict: "invalid" if > 40% steps invalid; "suspect" if > 25% suspect;
   "valid" otherwise.
-- Be strict: a navigate action to a URL that doesn't exist in the page is always invalid.
-  A click on a selector that appears in the page HTML is valid even if it failed at runtime.
-- Do NOT discard issues just because the step failed — failed steps often reveal real issues.
+- A navigate action to a URL absent from the page is always invalid.
+- A click on a selector present in the page HTML is valid even if it failed at runtime.
+- Do NOT discard issues merely because the step failed — failures often reveal real issues.
   Only discard if the step itself was hallucinated or impossible.
+- Steps where action_type="observe" and success=true are always valid regardless of
+  whether the subsequent issue_detected is useful.
 """
- 
+
 TRACE_VERIFICATION_USER = """\
 Persona: {persona_name} (id={persona_id})
 Task goal: {task_goal}
 Stop reason: {stop_reason}
 Steps taken: {steps_taken}
- 
-PAGE HTML (truncated to 6000 chars):
+
+PAGE HTML (truncated):
 {html_snippet}
- 
+
 ACTION TRACE:
 {action_trace_text}
- 
+
 ISSUES REPORTED:
 {issues_text}
- 
+
 Verify each step. Output ONLY the JSON object.
 """
- 
- 
+
+
 # ---------------------------------------------------------------------------
 # 5. Issue Clustering Prompt
 # ---------------------------------------------------------------------------
-# Groups all verified issues across all personas into semantically coherent
-# clusters. Each cluster will be handed to one Recommender Agent.
- 
+
 CLUSTERING_SYSTEM = """\
 You are a UX research analyst grouping usability and accessibility issues into
 coherent themes for targeted remediation.
- 
-You will receive a list of verified issues from multiple simulated personas interacting
-with the same UI. Group them into clusters where each cluster:
-  - Shares a common root cause or affected UI component
-  - Would be addressed by the same type of fix
-  - Affects a coherent part of the user experience
- 
-You will output ONLY a valid JSON array of cluster objects — no explanation, no markdown:
- 
+
+Output ONLY a valid JSON array of cluster objects — no explanation, no markdown:
+
 [
   {{
     "cluster_id": "cluster_1",
@@ -246,102 +343,94 @@ You will output ONLY a valid JSON array of cluster objects — no explanation, n
     "dominant_category": "usability | accessibility | navigation | clarity | form | other",
     "dominant_severity": "critical | high | medium | low",
     "affected_personas": ["persona_id_1", ...],
-    "affected_elements": ["CSS selector 1", "CSS selector 2", ...],
-    "representative_description": "string — 2-3 sentences: what these issues share, root cause, combined impact"
+    "affected_elements": ["CSS selector 1", ...],
+    "representative_description": "string — 2-3 sentences: shared root cause and combined impact"
   }}
 ]
- 
+
 Rules:
 - Every issue_id must appear in exactly ONE cluster — no duplicates, no orphans.
-- Prefer fewer, richer clusters over many singleton clusters.
-  A cluster of 1 issue is acceptable only if the issue is genuinely unique.
-- dominant_severity: the most severe severity level present in the cluster.
-- dominant_category: the most common category; if tied, prefer accessibility > usability > navigation.
-- Cluster by ROOT CAUSE, not symptom. Two issues that both say "button not accessible"
-  belong together even if they name different buttons, if the root cause is the same pattern.
-- affected_elements: deduplicated list of all CSS selectors across all issues in the cluster.
-  Include null/missing selectors as empty string, then deduplicate.
+- Cluster by ROOT CAUSE, not symptom. Two issues saying "button not accessible"
+  and "no aria-label on submit" belong together — same root cause, same fix.
+- Prefer fewer, richer clusters. A singleton cluster is acceptable only if the
+  issue is genuinely unique in root cause AND element.
+- dominant_severity: the MOST SEVERE severity level present in the cluster.
+- dominant_category: most common category; ties → accessibility > usability > navigation.
+- affected_elements: deduplicated CSS selectors across all issues. Use "" for null selectors.
+- Do NOT create clusters for speculative or observe-only issues with no affected_element
+  and no reproduction_steps — these are low-signal and should be merged into the closest
+  real cluster or dropped if truly isolated.
 """
- 
+
 CLUSTERING_USER = """\
 UI type: {ui_type}
 UI context: {ui_context}
 Total verified issues: {total_issues}
- 
+
 VERIFIED ISSUES:
 {issues_json}
- 
+
 Group these issues into clusters. Output ONLY the JSON array.
 """
- 
- 
+
+
 # ---------------------------------------------------------------------------
 # 6. Recommender Profile Generation Prompt
 # ---------------------------------------------------------------------------
-# After clustering, the supervisor creates one RecommenderProfile per cluster.
-# This profile is the "brief" handed to each Recommender Agent so it knows
-# exactly what expertise to apply and what constraints to respect.
- 
+
 RECOMMENDER_PROFILE_SYSTEM = """\
 You are a UX engineering lead assigning remediation tasks to specialist agents.
-For each issue cluster, you will create a RecommenderProfile — a structured brief
-that tells a Recommender Agent exactly what to fix, how to approach it, and what constraints apply.
- 
-You will output ONLY a valid JSON array of RecommenderProfile objects — no explanation, no markdown:
- 
+For each issue cluster create a RecommenderProfile — a structured brief
+that tells a Recommender Agent exactly what to fix, how, and what constraints apply.
+
+Output ONLY a valid JSON array of RecommenderProfile objects — no explanation, no markdown:
+
 [
   {{
     "recommender_id": "rec_1",
-    "recommender_name": "string — short memorable agent name reflecting its specialty (e.g. 'AriaFixer', 'FormGuard', 'NavSentinel', 'ContrastBot')",
+    "recommender_name": "string — memorable name reflecting specialty (e.g. 'AriaFixer', 'FormGuard')",
     "cluster_id": "cluster_1",
     "cluster_label": "string",
     "focus": "accessibility | usability | navigation | form | clarity | mixed",
-    "cluster_summary": "string — 2-3 sentences briefing the agent on what's broken",
+    "cluster_summary": "string — 2-3 sentences briefing the agent on what is broken",
     "dominant_severity": "critical | high | medium | low",
     "affected_elements": ["CSS selector", ...],
     "wcag_references": ["WCAG 2.1 SC X.X.X — Name", ...],
-    "fix_strategy_hint": "string — recommended fix approach and constraints",
+    "fix_strategy_hint": "string — specific fix approach with constraints",
+    "num_recommenders": 1,
     "priority": 1
   }}
 ]
- 
+
 Rules:
-Rules:
-- Multiple RecommenderProfile per cluster based on the complexity of the cluster — same order as input clusters.
-- recommender_name: invent a short, memorable name that reflects the agent's specialty:
-    accessibility clusters → e.g. "AriaFixer", "A11yGuard", "FocusBot"
-    form clusters         → e.g. "FormGuard", "LabelSentry", "ValidationBot"
-    navigation clusters   → e.g. "NavSentinel", "PathFinder", "RouteAudit"
-    clarity clusters      → e.g. "CopyEditor", "ClarityBot", "TextAudit"
-    contrast/visual       → e.g. "ContrastBot", "VisionCheck", "ColorAudit"
-  Each name must be unique across the profiles array.
-- focus: pick the single best-fit domain. Use "mixed" only if the cluster genuinely
-  spans two domains equally.
-- fix_strategy_hint must be SPECIFIC and ACTIONABLE:
-  Good: "Add aria-label attributes to all three icon-only buttons. Do not change layout or
-        add visible text — space is constrained. Ensure aria-label matches the button's function."
-  Bad:  "Fix the accessibility issues."
-- wcag_references: list all relevant WCAG 2.1/2.2 success criteria this cluster violates.
-  Format: "WCAG 2.1 SC 1.1.1 — Non-text Content"
-- num_recommenders: number of parallel recommender instances to assign to this cluster.
-  Base this on CLUSTER COMPLEXITY — use the following scale:
-    1 → simple cluster: 1-3 issues, single focus, same root cause, 1-2 affected elements
-    2 → moderate cluster: 4-7 issues OR mixed severities OR 3-5 distinct affected elements
-    3 → complex cluster: 8+ issues OR two distinct focus areas OR 6+ affected elements
-    4 → critical + sprawling: critical severity AND 8+ issues AND 5+ affected elements
-  Never assign 4 unless ALL three conditions for that tier are met.
-- priority: rank 1 (highest) to N where N = number of clusters.
-  Base rank on: severity (critical > high > medium > low), then breadth of persona impact.
+- ONE profile per cluster. Multiple recommenders per cluster (num_recommenders > 1)
+  only for clusters with 8+ issues spanning 5+ distinct elements.
+- recommender_name must be unique across the array.
+- fix_strategy_hint must be SPECIFIC:
+  ✓ "Add <label for='email'> wrapping the text 'Email address' before #email input.
+     Do not change layout. Also add aria-describedby linking #email to a new
+     #email-error span for screen reader error announcements."
+  ✗ "Fix the accessibility issues."
+- focus: pick the single best-fit domain. "mixed" only if cluster genuinely spans
+  two domains equally.
+- wcag_references: all violated WCAG 2.1/2.2 criteria. Format:
+  "WCAG 2.1 SC 1.3.1 — Info and Relationships"
+- priority: rank 1 (highest) to N. Base on: critical > high > medium > low,
+  then breadth of persona impact (more affected personas = higher priority).
+- num_recommenders scale:
+    1 → 1-3 issues, single element type, uniform fix
+    2 → 4-7 issues OR mixed severities OR 3-5 distinct elements
+    3 → 8+ issues OR two focus domains OR 6+ elements
+    4 → critical severity AND 8+ issues AND 5+ elements (all three required)
 """
- 
+
 RECOMMENDER_PROFILE_USER = """\
 UI type: {ui_type}
 UI context: {ui_context}
- 
-ISSUE CLUSTERS:
+
+ISSUE CLUSTERS ({num_clusters} total):
 {clusters_json}
- 
-Generate a number of RecommenderProfile per cluster based on the complexity of the cluster (total: {num_clusters}).
+
+Generate one RecommenderProfile per cluster.
 Output ONLY the JSON array.
 """
- 

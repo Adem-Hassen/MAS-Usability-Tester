@@ -1,22 +1,4 @@
-# tools/report/report_generator.py
-"""
-Report Generator Node — assembles the final DiagnosticReport.
-
-Called as the last node in the LangGraph pipeline, after verification_passed = True
-(or after max correction loops are exhausted).
-
-Pipeline:
-  1. Collect all pipeline data from state
-  2. Compute summary statistics (severity breakdown, resolution counts, etc.)
-  3. Call supervisor LLM to produce executive_summary + top_recommendations + overall_score
-  4. Assemble DiagnosticReport Pydantic model
-  5. Write JSON report to settings.output_dir / report_{report_id}.json
-  6. Write patched HTML (if not already saved by patch_applicator)
-  7. Return {"report": DiagnosticReport} to state
-
-The LLM call is optional — if it fails, a deterministic fallback summary is
-generated from the structured data so the pipeline always produces output.
-"""
+# agents/supervisor/report_generator.py
 
 from __future__ import annotations
 
@@ -27,13 +9,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-
 from config.settings import settings
 from tools.rate_limiter import groq_chat_completion
-from core.state import GraphState
 from schemas.issue_schema import IssueCluster, IssueReport, PersonaSimulationResult, IssueSeverity
 from schemas.patch_schema import UnifiedPatchSet
 from schemas.report_schema import DiagnosticReport, SeverityBreakdown, VerificationResult
+from schemas.persona_schema import UIAnalysis
 from prompts.supervisor_prompts import REPORT_SUMMARY_SYSTEM, REPORT_SUMMARY_USER
 from monitoring.logger import get_logger
 
@@ -44,37 +25,33 @@ logger = get_logger(__name__)
 # LangGraph node entry point
 # ---------------------------------------------------------------------------
 
-def report_generator_node(state: GraphState) -> dict:
-    """
-    LangGraph node.  Assembles and persists the DiagnosticReport.
-    Returns {"report": DiagnosticReport}.
-    """
+def report_generator_node(state: dict) -> dict:
     logger.info("report_generator.start")
 
-    # ── Collect state ──────────────────────────────────────────────────────
-    ui_analysis        = state.get("ui_analysis")
-    personas           = state.get("personas", [])
-    simulation_results = state.get("verified_results") or state.get("simulation_results", [])
-    issue_clusters     = state.get("issue_clusters", [])
-    verified_issues    = state.get("verified_issues", [])
-    unified_patch_set  = state.get("unified_patch_set")
+    ui_analysis           = state.get("ui_analysis")
+    personas              = state.get("personas", [])
+    simulation_results    = state.get("verified_results") or state.get("simulation_results", [])
+    issue_clusters        = state.get("issue_clusters", [])
+    verified_issues       = state.get("verified_issues", [])
+    unified_patch_set     = state.get("unified_patch_set")
     verification_results: list[VerificationResult] = state.get("verification_results", [])
-    verification_passed = state.get("verification_passed", False)
+    verification_passed   = state.get("verification_passed", False)
     correction_loop_count = state.get("correction_loop_count", 0)
     total_patches_applied = state.get("total_patches_applied", 0)
-    patched_html       = state.get("patched_html_content", state.get("html_content", ""))
-    html_source_path   = state.get("html_source_path", "unknown.html")
-    ui_context         = state.get("ui_context", "General web UI")
+    html_source_path      = state.get("html_source_path", "unknown.html")
+    ui_context            = state.get("ui_context", "General web UI")
 
-    # ── Compute statistics ─────────────────────────────────────────────────
     sev_breakdown   = _compute_severity_breakdown(verified_issues)
     total_issues    = len(verified_issues)
-    resolved_count  = sum(len(vr.issues_resolved)          for vr in verification_results)
-    remaining_count = sum(len(vr.issues_remaining)         for vr in verification_results)
-    regressions     = sum(len(vr.new_issues_introduced)    for vr in verification_results)
-    completed_count = sum(1 for vr in verification_results if vr.task_completed_after_patch)
+    resolved_count  = sum(len(vr.issues_resolved)       for vr in verification_results)
+    remaining_count = sum(len(vr.issues_remaining)      for vr in verification_results)
+    regressions     = sum(len(vr.new_issues_introduced) for vr in verification_results)
 
-    # ── LLM executive summary ──────────────────────────────────────────────
+    completed_count = sum(
+        1 for r in simulation_results
+        if getattr(r, "task_completed", False)
+    )
+
     overall_score, executive_summary, top_recommendations = _generate_summary(
         total_issues=total_issues,
         issues_resolved=resolved_count,
@@ -83,24 +60,21 @@ def report_generator_node(state: GraphState) -> dict:
         total_personas=len(personas),
         severity_breakdown=sev_breakdown,
         clusters=issue_clusters,
+        simulation_results=simulation_results,
+        ui_analysis=ui_analysis,
+        verification_passed=verification_passed,
     )
 
-    # ── Assemble report ────────────────────────────────────────────────────
     report_id = f"report_{uuid.uuid4().hex[:8]}"
 
-    # Ensure unified_patch_set exists (even if empty)
     if unified_patch_set is None:
-        from schemas.patch_schema import UnifiedPatchSet
         unified_patch_set = UnifiedPatchSet(
             patches=[],
             conflicts_detected=0,
             conflicts_resolved=0,
         )
 
-    # Ensure ui_analysis is never None — DiagnosticReport requires a valid object.
-    # This happens on early short-circuits (pipeline_error, HTML not found, etc.)
     if ui_analysis is None:
-        from schemas.persona_schema import UIAnalysis
         ui_analysis = UIAnalysis(
             ui_purpose="Analysis unavailable — pipeline ended before supervisor completed.",
             ui_type="unknown",
@@ -135,7 +109,6 @@ def report_generator_node(state: GraphState) -> dict:
         top_recommendations=top_recommendations,
     )
 
-    # ── Persist ────────────────────────────────────────────────────────────
     _save_report(report)
 
     logger.info(
@@ -147,6 +120,8 @@ def report_generator_node(state: GraphState) -> dict:
         remaining=remaining_count,
         regressions=regressions,
         verification_passed=verification_passed,
+        completed_personas=completed_count,
+        total_personas=len(personas),
     )
 
     return {"report": report}
@@ -164,16 +139,15 @@ def _generate_summary(
     total_personas: int,
     severity_breakdown: SeverityBreakdown,
     clusters: list[IssueCluster],
+    simulation_results: list = None,
+    ui_analysis: Optional[UIAnalysis] = None,
+    verification_passed: bool = False,
 ) -> tuple[float, str, list[str]]:
-    """
-    Call the supervisor LLM to produce overall_score, executive_summary,
-    and top_recommendations.  Falls back to deterministic values on failure.
-    """
+
     sev_str = (
         f"critical={severity_breakdown.critical}, high={severity_breakdown.high}, "
         f"medium={severity_breakdown.medium}, low={severity_breakdown.low}"
     )
-
     clusters_summary = "\n".join(
         f"  - [{c.dominant_severity}] {c.cluster_label} ({c.issue_count} issues): "
         f"{c.representative_description}"
@@ -181,6 +155,7 @@ def _generate_summary(
     )
 
     user = REPORT_SUMMARY_USER.format(
+        ui_type=ui_analysis.ui_type if ui_analysis else "unknown",
         total_issues=total_issues,
         issues_resolved=issues_resolved,
         issues_remaining=issues_remaining,
@@ -188,6 +163,7 @@ def _generate_summary(
         total_personas=total_personas,
         severity_breakdown=sev_str,
         clusters_summary=clusters_summary or "No clusters found.",
+        verification_passed=verification_passed,
     )
 
     raw, error = _call_supervisor_llm(
@@ -198,10 +174,13 @@ def _generate_summary(
 
     if error:
         logger.warning("report_generator.llm_error", error=error)
-        return _fallback_summary(total_issues, issues_remaining, severity_breakdown)
+        return _fallback_summary(
+            total_issues, issues_remaining, severity_breakdown,
+            completed, total_personas, simulation_results or []
+        )
 
     try:
-        data = json.loads(raw)
+        data  = json.loads(raw)
         score = float(data.get("overall_score", 5.0))
         score = max(0.0, min(10.0, score))
         summary = data.get("executive_summary", "")
@@ -211,29 +190,58 @@ def _generate_summary(
         return score, summary, recs[:5]
     except Exception as e:
         logger.warning("report_generator.parse_error", error=str(e))
-        return _fallback_summary(total_issues, issues_remaining, severity_breakdown)
+        return _fallback_summary(
+            total_issues, issues_remaining, severity_breakdown,
+            completed, total_personas, simulation_results or []
+        )
 
 
 def _fallback_summary(
     total_issues: int,
     issues_remaining: int,
     sev: SeverityBreakdown,
+    completed: int = 0,
+    total_personas: int = 0,
+    simulation_results: list = None,
 ) -> tuple[float, str, list[str]]:
-    """Deterministic fallback when LLM is unavailable."""
+    simulation_results = simulation_results or []
+    task_completed_ratio = completed / max(total_personas, 1)
+
     if total_issues == 0:
-        score = 9.0
-        summary = (
-            "No usability or accessibility issues were detected during simulation. "
-            "All personas completed their tasks. The UI appears well-structured and "
-            "accessible. Continue monitoring with updated personas as the UI evolves."
-        )
-        recs = ["No immediate actions required."]
+        if task_completed_ratio >= 0.5:
+            score = 9.0
+            summary = (
+                "No usability or accessibility issues were detected during simulation "
+                f"and {completed}/{total_personas} persona(s) completed their tasks. "
+                "The UI appears well-structured and accessible."
+            )
+            recs = ["No immediate actions required. Schedule periodic re-evaluation as the UI evolves."]
+        else:
+            score = 5.0
+            summary = (
+                f"No usability or accessibility issues were automatically detected, "
+                f"but only {completed}/{total_personas} persona(s) completed their tasks. "
+                "This discrepancy suggests the automated issue detection may have missed "
+                "problems that blocked task completion. A manual accessibility audit is "
+                "strongly recommended before deployment."
+            )
+            recs = [
+                "Conduct a manual accessibility audit — automated detection may have missed issues.",
+                "Test the UI with real users or assistive technologies (screen reader, keyboard-only).",
+                "Check for missing form labels (WCAG 1.3.1) and insufficient color contrast (WCAG 1.4.3).",
+                "Verify that all form submission flows provide clear success/error feedback.",
+                "Review the persona simulation traces to identify where tasks were blocked.",
+            ]
     else:
         resolved_ratio = 1.0 - (issues_remaining / max(total_issues, 1))
-        score = max(1.0, min(9.0, 4.0 + resolved_ratio * 5.0 - sev.critical * 1.5 - sev.high * 0.5))
+        base_score = 4.0 + resolved_ratio * 5.0 - sev.critical * 1.5 - sev.high * 0.5
+        if task_completed_ratio < 0.5:
+            base_score -= 1.0
+        score = max(1.0, min(9.0, base_score))
         summary = (
-            f"The UI evaluation found {total_issues} issues across all simulated personas. "
-            f"{sev.critical} critical and {sev.high} high severity issues were identified. "
+            f"The UI evaluation found {total_issues} issues across all simulated personas "
+            f"({sev.critical} critical, {sev.high} high severity). "
+            f"{completed}/{total_personas} persona(s) completed their tasks. "
             f"After patching, {issues_remaining} issues remain unresolved. "
             "A full manual review of remaining issues is recommended before deployment."
         )
@@ -267,16 +275,11 @@ def _compute_severity_breakdown(issues: list[IssueReport]) -> SeverityBreakdown:
 # ---------------------------------------------------------------------------
 
 def _save_report(report: DiagnosticReport) -> None:
-    """Write the DiagnosticReport as JSON to the output directory."""
     try:
         output_dir = Path(settings.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-
         out_path = output_dir / f"{report.report_id}.json"
-        out_path.write_text(
-            report.model_dump_json(indent=2),
-            encoding="utf-8",
-        )
+        out_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
         logger.info("report_generator.saved", path=str(out_path))
     except Exception as e:
         logger.error("report_generator.save_failed", error=str(e))
@@ -291,16 +294,12 @@ def _call_supervisor_llm(
     user:   str,
     task:   str,
 ) -> tuple[str, Optional[str]]:
-    """
-    Uses the supervisor LLM for report summary generation.
-    Rate-limiting handled by groq_chat_completion (semaphore + backoff).
-    """
     return groq_chat_completion(
         api_key     = settings.supervisor_api_key,
         model       = settings.supervisor_llm_model,
         messages    = [{"role": "system", "content": system},
                        {"role": "user",   "content": user}],
         temperature = settings.supervisor_temperature,
-        max_tokens  = getattr(settings, 'supervisor_max_tokens', settings.llm_max_output_tokens),
+        max_tokens  = getattr(settings, "supervisor_max_tokens", settings.llm_max_output_tokens),
         task        = task,
     )

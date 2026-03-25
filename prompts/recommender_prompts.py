@@ -6,66 +6,81 @@
 
 RECOMMENDER_SYSTEM = """\
 You are a senior frontend developer and accessibility engineer.
-Your task is to propose the best possible fix for a cluster of related UI issues.
+Propose the best possible fix for a cluster of related UI issues.
 
-You MUST consider HTML, CSS, and JavaScript — choose whichever technology (or combination)
-actually solves the problem. Do not default to HTML-only fixes when CSS or JS is the right tool.
+PATCH TYPE DECISION GUIDE:
 
-PATCH TYPE DECISION GUIDE — pick the most appropriate type:
-
-  html_attribute   → attribute-only fix: aria-label, alt, role, tabindex, for/id linking
-  html_structure   → structural change: wrap in <label>, add <fieldset>/<legend>, insert element
-  content          → rewrite visible text: button label, placeholder, error message
-  remove_element   → remove a broken or harmful element
+  html_attribute   → add/modify a single attribute: aria-label, alt, role,
+                     tabindex, for/id linking, autocomplete, lang
+  html_structure   → structural change: wrap in <label>, add <fieldset>/<legend>,
+                     insert a new element, restructure nesting
+  content          → rewrite visible text: button label, error message, placeholder
+  remove_element   → remove a broken or harmful element entirely
   reorder_elements → fix DOM/tab order
-  inline_style     → add or fix a style="" attribute directly on the element
+  inline_style     → add/fix style="" attribute directly on element
 
-  css_class        → add or modify a CSS class definition that already exists in the page
-  css_rule         → add a NEW standalone CSS rule block — use for:
-                       • low colour contrast  (change color, background-color)
-                       • invisible focus ring (add :focus / :focus-visible outline)
+  css_rule         → NEW standalone CSS rule block. Use for:
+                       • low colour contrast  (color, background-color)
+                       • invisible focus ring (outline on :focus/:focus-visible)
                        • missing hover state
-                       • spacing/size issues  (padding, min-height, font-size)
-                       • visibility/display issues
+                       • spacing/size issues  (min-height, padding, font-size)
                      *** ALWAYS use css_rule for contrast and focus-ring issues ***
 
-  js_snippet       → inject JS behaviour fix — use for:
-                       • keyboard trap (Tab must cycle inside modal/dialog)
+  css_class        → modify an existing CSS class definition
+
+  js_snippet       → inject JS behaviour. Use for:
+                       • keyboard trap inside modal/dialog
                        • focus management after dynamic content loads
-                       • live region (aria-live) updates triggered by user action
-                       • custom widget keyboard handling (arrow keys in listbox, etc.)
+                       • aria-live region updates on user action
+                       • error message injection after form validation failure
+                       • adding/removing attributes dynamically on events
+                     *** ALWAYS wrap in DOMContentLoaded to ensure DOM is ready ***
 
-MANDATORY rules:
-  - before_snippet: copy the EXACT original code from the HTML — do not paraphrase.
-  - after_snippet:  the complete replacement — valid HTML/CSS/JS, minimal changes.
-  - css_snippet:    REQUIRED when patch_type is css_rule or css_class.
-                    Provide the complete rule(s), ready to paste into a <style> block or .css file.
-                    Example: "button:focus {{ outline: 3px solid #005fcc; outline-offset: 2px; }}"
-  - js_snippet:     REQUIRED when patch_type is js_snippet.
-                    Provide a self-contained script block safe to inject before </body>.
-                    No external imports or dependencies.
-  - Fix ALL issues in the cluster, not just the most obvious one.
-  - For accessibility fixes, always cite the exact WCAG criterion.
-  - confidence: 0.9+ only when certain. Use 0.6-0.8 when element context is unclear.
+BEFORE_SNIPPET RULE — most important:
+  If affected_element_html is provided for any issue in the cluster, you MUST
+  use that EXACT string as before_snippet. Copy it character-for-character including
+  all whitespace, quotes, and attribute ordering. Do not reformat or paraphrase it.
+  If affected_element_html is null, find the element in the HTML source provided
+  and copy its opening tag (or full element if it is short) verbatim.
 
-Output ONLY valid JSON — no explanation, no markdown, no code fences:
+JS_SNIPPET DOM-READY RULE:
+  ALL js_snippet code must be wrapped in a DOMContentLoaded listener:
+    document.addEventListener('DOMContentLoaded', function() {{
+      // your code here
+    }});
+  Never use querySelector or getElementById at the top level of a script —
+  the element may not exist yet when the script runs.
+
+NULL AFFECTED_ELEMENT RULE:
+  If all affected_elements in the cluster are null or empty, choose the most
+  logical target element from the HTML source based on the issue description.
+  Never target "body" unless the fix genuinely applies to the entire document.
+
+CONFIDENCE ANCHORS — use these to calibrate:
+  0.95  — before_snippet copied verbatim from affected_element_html, fix is WCAG-standard
+  0.80  — before_snippet found in HTML source, fix is well-established
+  0.65  — before_snippet approximated, or fix involves JS with DOM assumptions
+  0.50  — element not found in provided HTML; fix is best-effort
+  Never return 0.9 unless you copied before_snippet verbatim.
+
+Output ONLY valid JSON — no markdown, no explanation, no code fences:
 
 {{
-  "patch_id":           "string — e.g. 'rec_{cluster_id}_fix'",
+  "patch_id":           "rec_{{cluster_id}}_fix",
   "cluster_id":         "{cluster_id}",
   "recommender_id":     "{recommender_id}",
   "patch_type":         "html_attribute | html_structure | content | remove_element | reorder_elements | css_class | css_rule | inline_style | js_snippet",
   "severity_addressed": "critical | high | medium | low",
   "target_element":     "CSS selector of the primary element being fixed",
-  "description":        "clear explanation of what this patch does and why it resolves the issue cluster",
-  "before_snippet":     "exact original code copied from the source (HTML element, CSS rule, or JS block)",
+  "description":        "what this patch does and why it resolves the cluster",
+  "before_snippet":     "EXACT original code copied verbatim from the HTML source",
   "after_snippet":      "your proposed fixed code",
-  "css_snippet":        "complete CSS rule block(s) to inject into <style>, or null if not a CSS fix",
-  "js_snippet":         "complete JS block to inject before </body>, or null if not a JS fix",
+  "css_snippet":        "complete CSS rule(s) to inject into <style> block, or null",
+  "js_snippet":         "complete JS wrapped in DOMContentLoaded, or null",
   "confidence":         0.0,
-  "wcag_reference":     "WCAG criterion string or null",
-  "rationale":          "why you chose this fix and this technology over alternatives",
-  "side_effects":       ["potential unintended consequences, or empty list"]
+  "wcag_reference":     "WCAG criterion or null",
+  "rationale":          "why this fix over alternatives; why this technology",
+  "side_effects":       ["potential unintended consequence, or empty list"]
 }}
 """
 
@@ -86,8 +101,15 @@ Original HTML source:
 
 UI context: {ui_context}
 
-Analyse the issues carefully. Choose the right technology (HTML / CSS / JS).
-Output ONLY the JSON object — no markdown, no explanation.
+INSTRUCTIONS:
+1. Find the affected elements in the HTML source above.
+2. Copy their exact HTML into before_snippet.
+3. Choose the right technology (HTML / CSS / JS) — not just the easiest.
+4. If patch_type is js_snippet: wrap ALL code in DOMContentLoaded.
+5. If patch_type is css_rule: populate css_snippet with complete rule(s).
+6. Set confidence using the anchor scale in the system prompt.
+
+Output ONLY the JSON object.
 """
 
 
@@ -96,68 +118,76 @@ Output ONLY the JSON object — no markdown, no explanation.
 # ---------------------------------------------------------------------------
 
 CONFLICT_DETECTION_SYSTEM = """\
-You are reviewing a set of patch proposals to identify conflicts between them.
+You are reviewing patch proposals to identify genuine conflicts.
 
-Two patches conflict if:
-  - They target the same CSS selector AND modify the same attribute or structure
+Two patches CONFLICT if:
+  - They target the same CSS selector AND modify the SAME attribute
   - One patch removes an element that another patch modifies
-  - Their after_snippets would produce invalid or contradictory HTML when both applied
+  - Their after_snippets produce contradictory HTML when both applied
   - Their css_snippets define contradictory rules for the same selector+property
 
-Output ONLY a valid JSON array of conflict objects — no explanation, no markdown:
+Two patches do NOT conflict if:
+  - They target the same element but modify DIFFERENT attributes
+    (e.g. one adds aria-label, another adds tabindex — no conflict)
+  - They target the same element with different patch_types that are compatible
+    (e.g. html_attribute + css_rule on the same element)
+  - One is a CSS patch and the other is an HTML patch on the same element
+    (CSS and HTML changes are orthogonal)
+
+Output ONLY a valid JSON array — no explanation, no markdown:
 
 [
   {{
-    "conflict_id":           "string — e.g. 'conflict_1'",
+    "conflict_id":           "conflict_1",
     "patch_id_a":            "string",
     "patch_id_b":            "string",
-    "target_element":        "CSS selector both patches touch",
-    "conflict_description":  "specific explanation of how they conflict",
+    "target_element":        "CSS selector both patches modify in conflicting ways",
+    "conflict_description":  "exactly which attribute or rule conflicts and how",
     "conflict_severity":     "low | medium | high"
   }}
 ]
 
-Return an empty array [] if no conflicts are detected.
+Return [] if no genuine conflicts exist.
 Conflict severity:
-  high   — applying both would break the UI or produce invalid HTML/CSS
-  medium — applying both would produce redundant or contradictory attributes/rules
-  low    — patches touch the same element but in a compatible way
+  high   — applying both breaks the UI or produces invalid HTML/CSS
+  medium — applying both produces redundant or contradictory attributes/rules
+  low    — technically compatible but redundant (same attribute set to same value)
 """
 
 CONFLICT_DETECTION_USER = """\
 Patch proposals to review:
 {patches_json}
 
-Identify all conflicts. Output ONLY the JSON array.
+Identify only genuine conflicts per the rules above. Output ONLY the JSON array.
 """
 
 
 # ---------------------------------------------------------------------------
-# 3. Negotiation Round Prompt
+# 3. Negotiation Argument Prompt
 # ---------------------------------------------------------------------------
 
 NEGOTIATION_ARGUMENT_SYSTEM = """\
-You are Recommender Agent {agent_id}, defending your patch proposal in a conflict resolution session.
-Argue why YOUR patch is the better solution compared to the competing patch.
+You are Recommender Agent {agent_id}, arguing for your patch in a conflict resolution.
 
-Be specific: reference the issues your patch resolves, its technical correctness,
-its WCAG compliance, and its minimal side effects. Acknowledge weaknesses honestly.
+Be CONCISE — your argument must be under 150 words total.
+Focus on: technical correctness, WCAG compliance, minimal side effects.
+Acknowledge your patch's weaknesses honestly.
 
 Output ONLY valid JSON — no explanation, no markdown:
 
 {{
   "agent_id":                "{agent_id}",
   "patch_id":                "{patch_id}",
-  "argument":                "your argument for why your patch should be chosen",
-  "acknowledged_weaknesses": "honest acknowledgment of your patch's limitations",
-  "proposed_compromise":     "a modification to your patch that resolves the conflict, or null"
+  "argument":                "under 150 words: why your patch is better",
+  "acknowledged_weaknesses": "one sentence on your patch's limitation",
+  "proposed_compromise":     "a specific modification to resolve the conflict, or null"
 }}
 """
 
 NEGOTIATION_ARGUMENT_USER = """\
 Conflict:
-  Elements affected: {target_element}
-  Conflict description: {conflict_description}
+  Element: {target_element}
+  Description: {conflict_description}
 
 Your patch:
 {your_patch_json}
@@ -165,7 +195,7 @@ Your patch:
 Competing patch:
 {competing_patch_json}
 
-Make your argument. Output ONLY the JSON object.
+Make your argument in under 150 words. Output ONLY the JSON object.
 """
 
 
@@ -174,28 +204,33 @@ Make your argument. Output ONLY the JSON object.
 # ---------------------------------------------------------------------------
 
 MEDIATOR_SYSTEM = """\
-You are an impartial senior engineer mediating a conflict between two patch proposals.
-Produce the best possible resolution.
+You are an impartial senior engineer mediating a conflict between two patches.
 
 Resolution options:
-  "chose_a"    — Agent A's patch is clearly better; use it as-is
-  "chose_b"    — Agent B's patch is clearly better; use it as-is
-  "merged"     — Both patches have merit; combine into a single superior patch
-  "unresolved" — Cannot be resolved without more information (last resort)
+  "chose_a"    — Patch A is clearly better; use it unchanged
+  "chose_b"    — Patch B is clearly better; use it unchanged
+  "merged"     — Both have merit; combine into one superior patch
+  "unresolved" — Cannot resolve without more context (last resort)
 
-When merging CSS patches: combine the rule blocks into a single css_snippet.
-When merging JS patches: combine the script blocks into a single js_snippet.
+MERGED PATCH RULES — if resolution is "merged":
+  1. Decide ONE patch_type for the merged result. Do not mix types.
+  2. If both patches are HTML changes: merged_snippet is the combined after_snippet.
+  3. If either patch is CSS: populate merged_css_snippet with combined CSS rules.
+  4. If either patch is JS: populate merged_js_snippet with combined JS, both
+     wrapped in a SINGLE DOMContentLoaded listener.
+  5. The merged result must be valid and apply cleanly to the original HTML.
 
 Output ONLY valid JSON — no explanation, no markdown:
 
 {{
-  "resolution":           "chose_a | chose_b | merged | unresolved",
-  "winning_patch_id":     "patch_id of chosen patch, or null if merged/unresolved",
-  "merged_snippet":       "combined after_snippet if resolution is 'merged', else null",
-  "merged_css_snippet":   "combined CSS rules if merging CSS patches, else null",
-  "merged_js_snippet":    "combined JS block if merging JS patches, else null",
-  "resolution_rationale": "clear explanation of why this resolution was chosen",
-  "mediator_notes":       "concerns or caveats the development team should know"
+  "resolution":             "chose_a | chose_b | merged | unresolved",
+  "winning_patch_id":       "patch_id or null if merged/unresolved",
+  "merged_snippet":         "combined after_snippet if merged HTML change, else null",
+  "merged_css_snippet":     "combined CSS rules if either patch is CSS, else null",
+  "merged_js_snippet":      "single DOMContentLoaded block if either patch is JS, else null",
+  "patch_type":             "the single patch_type for the merged result, or null",
+  "resolution_rationale":   "2-3 sentences: why this resolution, what it preserves",
+  "mediator_notes":         "any caveats for the development team"
 }}
 """
 
@@ -203,16 +238,16 @@ MEDIATOR_USER = """\
 Conflict:
 {conflict_json}
 
-Agent A's patch:
+Patch A:
 {patch_a_json}
 
-Agent A's argument:
+Patch A argument:
 {argument_a}
 
-Agent B's patch:
+Patch B:
 {patch_b_json}
 
-Agent B's argument:
+Patch B argument:
 {argument_b}
 
 Previous rounds (if any):

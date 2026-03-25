@@ -1,26 +1,4 @@
-# agents/supervisor/supervisor_agent.py
-"""
-Supervisor Agent — analyses ALL input pages in a single batch call,
-then generates personas tailored to each page's complexity.
 
-Node responsibilities
----------------------
-supervisor_node (entry point)
-    1. Read every HTML file listed in state["pages_input"]
-    2. Call LLM once to analyse ALL pages together, producing one
-       UIAnalysis per page.  Cross-page context lets the LLM understand
-       the overall application flow (login → dashboard → checkout …).
-    3. Generate personas per page: pages with more critical paths and
-       interactive elements receive more personas; simpler pages fewer.
-    4. Detect localStorage/sessionStorage seeds per page.
-    5. Return one PageContext per page — graph fans them out in parallel.
-
-analysis_node
-    Rule-based trace-integrity verification (no LLM).
-
-recommender_profile_node
-    Generates RecommenderProfile objects from clustered issues.
-"""
 
 from __future__ import annotations
 
@@ -31,6 +9,7 @@ from typing import Optional
 
 from config.settings import settings
 from tools.rate_limiter import groq_chat_completion
+from tools.html_preprocessor import preprocess_for_analysis
 from core.state import GraphState, PageContext
 from schemas.persona_schema import UIAnalysis, PersonaProfile
 from prompts.supervisor_prompts import (
@@ -368,7 +347,8 @@ def _batch_analyze_ui(
     # Build the pages block: one section per page
     pages_block_parts = []
     for i, page in enumerate(loaded, 1):
-        html = _smart_truncate(page["html_content"], per_page_chars)
+        html = preprocess_for_analysis(page["html_content"], per_page_chars)
+#
         pages_block_parts.append(
             f"=== PAGE {i} ===\n"
             f"File: {Path(page['html_path']).name}\n"
@@ -425,26 +405,6 @@ def _batch_analyze_ui(
         return _fallback_individual_analysis(loaded)
 
 
-def _smart_truncate(html: str, max_chars: int) -> str:
-    """
-    Truncate HTML to max_chars while preserving the most useful structure.
-    Keeps: <head>, first interactive elements (<form>, <input>, <button>,
-    <a>, <select>), and the opening of <body>.
-    Falls back to simple head+tail slice if parsing is impractical.
-    """
-    if len(html) <= max_chars:
-        return html
-
-    # Try to keep head + first N chars of body where interactive elements live
-    head_end = html.find("</head>")
-    if head_end > 0 and head_end < max_chars:
-        head_part = html[:head_end + 7]   # include </head>
-        body_budget = max_chars - len(head_part) - 20
-        body_start = html.find("<body", head_end)
-        if body_start > 0 and body_budget > 200:
-            return head_part + "\n" + html[body_start:body_start + body_budget] + "\n[truncated]"
-
-    return html[:max_chars] + "\n[truncated]"
 
 
 def _fallback_individual_analysis(
@@ -455,7 +415,7 @@ def _fallback_individual_analysis(
     for page in loaded:
         user = UI_ANALYSIS_USER.format(
             ui_context=page["ui_context"],
-            html_content=page["html_content"],
+            html_content=preprocess_for_analysis(page["html_content"], 10_000),
         )
         raw, error = _call_supervisor_llm(
             system_prompt=UI_ANALYSIS_SYSTEM,
