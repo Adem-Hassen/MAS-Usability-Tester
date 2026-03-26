@@ -21,6 +21,8 @@ dist/
 
 test_pages/
 
+UI_samples/
+
 # Logs
 *.log
 
