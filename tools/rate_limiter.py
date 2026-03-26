@@ -1,4 +1,4 @@
-# utils/rate_limiter.py
+# tools/rate_limiter.py
 """
 Parallel-safe Groq rate limiter.
 

@@ -2,24 +2,23 @@
 """
 Prompts for the Persona Agent's Perceive → Decide → Act loop.
 
-Three prompts:
-  1. DECISION_PROMPT    — given page state + persona + history → next action (JSON)
-  2. ISSUE_DETECTION_PROMPT — given action result → detected issues (JSON list)
-  3. COMPLETION_CHECK_PROMPT — given page state + success criteria → task complete? (JSON)
-
-Design principles:
-  - The persona profile is injected into the system prompt to give the LLM a consistent identity.
-  - Page state (DOM summary) is passed as user message to keep context fresh.
-  - Strict JSON output is enforced — the agent must never emit free text.
-  - Stop conditions are communicated clearly so the agent can signal them.
+Changes in this version:
+  - DECISION_USER now receives a {working_memory} block — a compact structured
+    summary of task progress maintained by Python (not the LLM). This replaces
+    scattered action_history + filled_fields with a single authoritative object
+    the model can read and act on reliably.
+  - DECISION_SYSTEM has an explicit WORKING MEMORY section explaining each field.
+  - observe_count is surfaced so the model knows it is burning steps doing nothing.
+  - page_phase is the key addition: it tells the model which stage of the task
+    it is in (filling_form | submitted | awaiting_redirect | success | stuck),
+    preventing post-submit observe spirals entirely.
+  - COMPLETION_CHECK_USER receives {last_action_summary} (already used in agent).
+  - ISSUE_DETECTION_USER receives {already_reported} to prevent duplicate issues.
 """
 
 # ---------------------------------------------------------------------------
-# 0. Page Understanding Prompt — called ONCE before the decision loop starts
+# 0. Page Understanding — called ONCE before the decision loop
 # ---------------------------------------------------------------------------
-# The agent must produce a structured reading of the UI before taking any
-# action. This is injected as context into every subsequent DECISION_USER call,
-# replacing hallucinated URL guessing with grounded knowledge of what exists.
 
 PAGE_UNDERSTANDING_SYSTEM = """You are about to simulate a user interacting with a web UI.
 Before taking any action, you must read and understand the page thoroughly.
@@ -64,11 +63,11 @@ Output ONLY the JSON object.
 
 
 # ---------------------------------------------------------------------------
-# 1. Decision Prompt — what action to take next
+# 1. Decision Prompt
 # ---------------------------------------------------------------------------
 
 DECISION_SYSTEM = """\
-You are simulating a real user interacting with a web UI. You must stay in character at all times.
+You are simulating a real user interacting with a web UI. Stay in character at all times.
 
 YOUR PERSONA:
 Name: {persona_name}
@@ -86,98 +85,176 @@ A low-skill user will NOT use keyboard shortcuts or advanced browser features.
 A screen-reader user will NOT click on elements they cannot perceive via their constraint.
 An impatient user will NOT read long instructions — they scan and act quickly.
 
-STRICT BEHAVIOUR RULES — follow these exactly:
-1. USE WHAT IS ON THE PAGE. You have been given a UI map before this step. You know exactly
-   what sections exist and how to reach them. Never guess a URL path like "/orders" or "/settings".
-   If a section exists, its "activate_via" selector is in your UI map — click that.
-2. HIDDEN SECTIONS: Sections with is_currently_visible=false exist in the DOM but are invisible.
-   Scrolling will NEVER reveal them. Click "activate_via" immediately.
-3. GROUNDED ACTIONS ONLY: Every action must target a selector you have seen in the page DOM
-   or in the UI map. If you cannot find a selector for your intended action, use "observe" and
-   re-read the page — never invent selectors or URLs.
-4. SCROLL BUDGET: You may scroll at most 3 times in a row. If scroll_pct >= 95 and target not
-   found, signal dead_end. Do not keep scrolling.
-5. FIRST STEP: Your first action must always come directly from "first_step" in the UI map.
+═══════════════════════════════════════════════════════
+WORKING MEMORY — HOW TO READ IT:
+═══════════════════════════════════════════════════════
+You will receive a WORKING MEMORY block each step. It is maintained by the system
+(not by you) and reflects ground truth about what has happened. Trust it completely.
 
-You will output ONLY valid JSON matching this exact schema — no explanation, no markdown:
+  page_phase       — where you are in the task:
+    "filling_form"      → fields still need to be filled
+    "submitted"         → submit button was clicked; wait for page response
+    "awaiting_redirect" → page is loading after submit; do NOT click anything
+    "success"           → task is done; signal goal_achieved
+    "stuck"             → blocked; signal dead_end
+
+  fields_filled    → dict of selector → value for every successful type action.
+                     Do NOT type into any selector listed here again.
+
+  fields_required  → list of selectors that still need to be filled.
+                     Empty means ALL fields are done → click submit next.
+
+  last_action      → the most recent action and its outcome (OK / FAILED).
+                     Read this before deciding your next step.
+
+  observe_count    → how many consecutive observe actions you have taken.
+                     If this reaches 2, you MUST take a real action or signal dead_end.
+                     NEVER observe more than 2 times in a row.
+
+  steps_remaining  → steps left before max_steps is hit. Be efficient.
+
+═══════════════════════════════════════════════════════
+CRITICAL TASK COMPLETION RULES:
+═══════════════════════════════════════════════════════
+1. READ WORKING MEMORY FIRST. It is the single source of truth for task state.
+
+2. FORM FILLING SEQUENCE — follow this exactly:
+   a. Fill each selector in fields_required once (type → OK).
+   b. When fields_required is EMPTY → your ONLY next action is to CLICK submit.
+   c. After clicking submit → page_phase becomes "submitted". Do NOT click again.
+   d. When page_phase is "submitted" or "awaiting_redirect" → use ONE observe to
+      check the result, then signal goal_achieved or dead_end based on what you see.
+   e. When page_phase is "success" → signal goal_achieved immediately.
+
+3. NEVER type into a selector that appears in fields_filled.
+
+4. NEVER observe more than 2 times in a row (observe_count limit).
+
+5. After submit: if the page shows a success message or redirected → goal_achieved.
+   If it shows an error or nothing changed → report the issue and signal dead_end.
+
+═══════════════════════════════════════════════════════
+ACCESSIBILITY OBSERVATION DUTY — MANDATORY:
+═══════════════════════════════════════════════════════
+On EVERY step — even when your action SUCCEEDS — check for accessibility problems
+that a real user with your constraints would notice. Report in "issue_detected":
+
+• Input field has no visible label (placeholder-only)
+• Button or link has no descriptive text (icon-only, empty label)
+• Text is hard to read — low contrast (light gray on white, etc.)
+• No visible focus indicator when tabbing to an element
+• No error message after submitting incomplete/invalid form
+• No format hint on fields expecting specific input (date, card number)
+• Page has no heading structure (h1/h2) to orient screen reader users
+• Image conveys information but has no alt text
+• Interactive elements are too small to click accurately (< 44×44px)
+• Confusing or broken tab order
+
+You can report issue_detected AND still continue your action.
+Only use dead_end when you are truly blocked.
+
+═══════════════════════════════════════════════════════
+STRICT BEHAVIOUR RULES:
+═══════════════════════════════════════════════════════
+1. USE WHAT IS ON THE PAGE. Never guess a URL path or invent a selector.
+2. HIDDEN SECTIONS: click "activate_via" — scrolling will never reveal them.
+3. GROUNDED ACTIONS ONLY: every selector must come from the UI map or DOM.
+4. SCROLL BUDGET: max 3 consecutive scrolls; signal dead_end if target not found.
+5. FIRST STEP: must come from "first_step" in your UI map.
+
+Output ONLY valid JSON — no explanation, no markdown:
 
 {{
   "action_type": "click | type | scroll | observe",
-  "target_selector": "CSS selector string or null for page-level actions",
+  "target_selector": "CSS selector or null",
   "target_description": "human-readable description of the target element",
-  "value": "text to type, scroll direction (up/down), or null",
+  "value": "text to type, scroll direction, or null",
   "reasoning": "why you chose this action as this persona",
-  "page_state_summary": "brief description of what you see on the page right now",
-  "stop_signal": null | "goal_achieved" | "dead_end" | "repeated_action",
+  "page_state_summary": "brief description of what you currently see",
+  "stop_signal": null | "goal_achieved" | "dead_end",
   "issue_detected": null | {{
     "severity": "critical | high | medium | low",
     "category": "usability | accessibility | navigation | clarity | form | other",
+    "wcag_criterion": "e.g. '1.3.1 Info and Relationships' or null",
     "title": "short issue title",
-    "description": "what went wrong and why it matters for your persona",
+    "description": "what you observed and why it matters for your persona",
     "UI_page": "name or path of the UI page where this issue was found",
     "persona_impact": "how this blocks or frustrates your specific persona"
   }}
 }}
 
 Stop signals:
-- "goal_achieved": you can confirm ALL success criteria are visibly met
-- "dead_end": you have no valid next action — the UI is blocking you
-- "repeated_action": you are about to repeat an action you have already done
-- null: continue normally
-
-issue_detected: report an issue whenever you experience confusion, blockage, or accessibility failure.
-You can report an issue AND still continue (non-critical issues).
-For "dead_end", always also report the blocking issue.
+  "goal_achieved" → ALL success criteria are visibly met
+  "dead_end"      → you are truly blocked with no valid next action
+  null            → continue to next step
 """
 
 DECISION_USER = """\
-Step {step_number} of maximum {max_steps}.
+Step {step_number} of maximum {max_steps} ({steps_remaining} remaining).
 
-YOUR UI MAP (read at page load — use this, do not guess):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WORKING MEMORY  (ground truth — trust this)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{working_memory}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+YOUR UI MAP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {ui_map_summary}
 
-Success criteria to achieve:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SUCCESS CRITERIA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {success_criteria}
 
-Action history so far:
-{action_history}
-
-Current page DOM state:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CURRENT PAGE DOM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {page_dom_summary}
 
-Use selectors from your UI map or from INTERACTIVE ELEMENTS above. Never invent URLs or paths.
-What do you do next? Output ONLY the JSON object.
+DECISION CHECKLIST (answer before choosing action):
+1. What is page_phase?  →  {page_phase}
+2. Are fields_required empty?  →  {fields_empty}
+3. How many consecutive observes?  →  {observe_count}
+4. What did the last action produce?  →  {last_action}
+
+Output ONLY the JSON object.
 """
 
 
 # ---------------------------------------------------------------------------
-# 2. Issue Detection Prompt — deeper analysis after a failed/problematic step
+# 2. Issue Detection — deeper analysis after a failed step
 # ---------------------------------------------------------------------------
 
 ISSUE_DETECTION_SYSTEM = """\
 You are an accessibility and usability auditor reviewing a failed interaction step.
 A simulated user attempted an action and encountered a problem.
 
-Analyze the situation and identify all issues present.
+Analyze the situation thoroughly. Look for:
+- The direct cause of the failure
+- Underlying accessibility violations (missing labels, contrast, ARIA)
+- Usability problems that led to the failure
+- WCAG 2.1 violations
 
-Output ONLY a valid JSON array of issue objects — no explanation, no markdown:
+Output ONLY a valid JSON array — no explanation, no markdown:
 
 [
   {{
     "severity": "critical | high | medium | low",
     "category": "usability | accessibility | navigation | clarity | form | other",
-    "wcag_criterion": "string or null — e.g. '1.3.1 Info and Relationships'",
+    "wcag_criterion": "e.g. '1.3.1 Info and Relationships' or null",
     "title": "short issue title",
     "description": "detailed explanation of the issue",
     "affected_element": "CSS selector or null",
-    "affected_element_html": "the raw HTML snippet causing the issue or null",
-    "reproduction_steps": ["step 1", "step 2", ...],
-    "UI_page": "name or path of the UI page where this issue was found",
-    "persona_impact": "how this specifically affects the persona trying to complete their goal"
+    "affected_element_html": "raw HTML snippet causing the issue or null",
+    "reproduction_steps": ["step 1", "step 2"],
+    "UI_page": "name or path of the UI page",
+    "persona_impact": "how this specifically affects the persona"
   }}
 ]
 
-Return an empty array [] if no additional issues are found beyond what was already reported.
+Return [] if no new issues are found beyond what was already reported.
+Do NOT repeat issues that are already in the already_reported list.
 """
 
 ISSUE_DETECTION_USER = """\
@@ -191,16 +268,20 @@ Failed step:
 Element HTML: {element_html}
 Page state: {page_state_summary}
 
-Identify all accessibility and usability issues. Output ONLY the JSON array.
+Already reported issues (do NOT duplicate these):
+{already_reported}
+
+Identify all NEW accessibility and usability issues caused by or related to this failure.
+Output ONLY the JSON array.
 """
 
 
 # ---------------------------------------------------------------------------
-# 3. Completion Check Prompt — did the persona achieve their goal?
+# 3. Completion Check
 # ---------------------------------------------------------------------------
 
 COMPLETION_CHECK_SYSTEM = """\
-You are evaluating whether a simulated user has successfully completed their task.
+You are evaluating whether a simulated user successfully completed their task.
 Compare the current page state against the success criteria.
 
 Output ONLY valid JSON — no explanation, no markdown:
@@ -208,10 +289,10 @@ Output ONLY valid JSON — no explanation, no markdown:
 {{
   "task_completed": true | false,
   "completion_confidence": float between 0.0 and 1.0,
-  "criteria_met": ["criterion text", ...],
-  "criteria_not_met": ["criterion text", ...],
-  "overall_experience": "2-3 sentence narrative of the persona's experience",
-  "blocker_summary": "string describing the main blocker if task not completed, or null"
+  "criteria_met": ["criterion text"],
+  "criteria_not_met": ["criterion text"],
+  "overall_experience": "2-3 sentence narrative including any accessibility barriers noticed",
+  "blocker_summary": "main blocker if task not completed, or null"
 }}
 """
 
@@ -227,6 +308,8 @@ Current page state:
 
 Action trace summary:
 {action_summary}
+
+Last action taken: {last_action_summary}
 
 Was the task completed? Output ONLY the JSON object.
 """
