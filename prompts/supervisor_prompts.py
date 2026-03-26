@@ -406,11 +406,29 @@ Rules:
 - ONE profile per cluster. Multiple recommenders per cluster (num_recommenders > 1)
   only for clusters with 8+ issues spanning 5+ distinct elements.
 - recommender_name must be unique across the array.
-- fix_strategy_hint must be SPECIFIC:
-  ✓ "Add <label for='email'> wrapping the text 'Email address' before #email input.
-     Do not change layout. Also add aria-describedby linking #email to a new
-     #email-error span for screen reader error announcements."
-  ✗ "Fix the accessibility issues."
+- fix_strategy_hint MUST specify the technology AND the exact fix.
+  Step 1 — assign technology based on the issue type:
+    visual/styling problem (contrast, focus ring, spacing, colour, size)
+      → Technology: CSS  (patch_type: css_rule or css_class)
+    behaviour/dynamic problem (error messages on submit, focus management,
+      keyboard handling, live regions, conditional attribute changes)
+      → Technology: JS   (patch_type: js_snippet)
+    structural/labelling problem (missing label, wrong nesting, missing
+      attribute, wrong text, tab order)
+      → Technology: HTML (patch_type: html_attribute or html_structure)
+  Step 2 — write the hint in this format:
+    "Technology: <CSS|JS|HTML>. <specific fix>. Target: <selector>. Constraints: <any>."
+  Good examples:
+    ✓ "Technology: CSS. Add .btn-login:focus-visible {{ outline: 3px solid #005fcc;
+       outline-offset: 2px; }} to make keyboard focus visible. Do not change layout."
+    ✓ "Technology: JS. On DOMContentLoaded, attach a submit listener to #loginForm
+       that shows an error in a new #form-error <div> when fields are empty or
+       credentials are wrong. Inject the div before the submit button."
+    ✓ "Technology: HTML. Add <label for='email'>Email address</label> before #email.
+       Add <label for='password'>Password</label> before #password. No layout change."
+  Bad examples (never produce these):
+    ✗ "Review the issues and propose targeted HTML fixes."
+    ✗ "Fix the accessibility issues."
 - focus: pick the single best-fit domain. "mixed" only if cluster genuinely spans
   two domains equally.
 - wcag_references: all violated WCAG 2.1/2.2 criteria. Format:

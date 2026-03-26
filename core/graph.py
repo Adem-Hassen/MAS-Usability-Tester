@@ -1,42 +1,5 @@
 # graph.py
-"""
-MAS-Usability-Tester — LangGraph Pipeline
-==========================================
 
-Architecture
-------------
-Pages run in PARALLEL.  Personas within each page run SEQUENTIALLY inside
-a single node call.  This is the simplest design that avoids all LangGraph
-concurrent-write issues while preserving meaningful parallelism.
-
-  supervisor_node  (single — analyses all pages at once)
-       │
-       └─[_fan_out_pages]── Send × N_pages ──► page_pipeline_node
-                                                      │ (parallel per page)
-                                                      │
-                                               Runs full pipeline for one page:
-                                                  simulate all personas
-                                                  analyse traces
-                                                  cluster issues
-                                                  generate recommender profiles
-                                                  propose patches (parallel per profile)
-                                                  resolve conflicts
-                                                  apply patches
-                                                  verify
-                                                  [correction loop if needed]
-                                                  generate report
-                                                      │
-                                                      ▼
-                                             page_contexts[] += [ctx]  (operator.add)
-                                             reports[]       += [report]
-
-Parallel-write safety
----------------------
-- page_pipeline_node instances run in parallel (one per page)
-- Each instance writes ONLY to page_contexts[] and reports[] (both Annotated)
-- No two instances write to the same non-Annotated field
-- Zero concurrent-write errors possible
-"""
 
 from __future__ import annotations
 

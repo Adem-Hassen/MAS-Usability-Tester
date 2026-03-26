@@ -93,5 +93,6 @@ class DiagnosticReport(BaseModel):
         ...,
         description="Top 5 prioritized actionable improvements, ordered by impact"
     )
+    
 
     model_config = {"use_enum_values": True}

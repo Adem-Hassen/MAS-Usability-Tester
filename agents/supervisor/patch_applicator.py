@@ -1,27 +1,4 @@
 # agents/supervisor/patch_applicator.py
-"""
-Patch Applicator — applies ResolvedPatch objects to the original HTML.
-
-Patch type routing
-──────────────────
-html_attribute / html_structure / content / remove_element /
-reorder_elements / inline_style
-    → snippet replacement (before → after in the HTML body)
-
-css_rule / css_class
-    → css_snippet injected into an existing <style> block, or a new
-      <style> block appended before </head>.  The before/after snippets
-      are NOT used for matching — css_snippet is the authoritative source.
-
-js_snippet
-    → js_snippet injected as a <script> block just before </body>.
-      The before/after snippets are NOT used for matching.
-
-This distinction is critical: the LLM often returns before_snippet ==
-after_snippet for CSS/JS patches (because the change is not an in-place
-HTML edit but an injection), so snippet-equality must never be used to
-skip a CSS/JS patch.
-"""
 
 from __future__ import annotations
 
@@ -34,10 +11,8 @@ from monitoring.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Patch types that are injected, not swapped
-_CSS_TYPES = {PatchType.CSS_RULE, PatchType.CSS_CLASS,
-              "css_rule", "css_class"}
-_JS_TYPES  = {PatchType.JS_SNIPPET, "js_snippet"}
+_CSS_TYPES = {"css_rule", "css_class"}
+_JS_TYPES  = {"js_snippet"}
 
 
 # ---------------------------------------------------------------------------
@@ -81,46 +56,48 @@ def _apply_patches(
     skipped: list[tuple[str, str]] = []
     current  = html
 
-    # Sort: remove_element last, CSS/JS after HTML patches
+    # Order: HTML first, then CSS, then JS, remove_element last
     patches_sorted = sorted(
         patches,
         key=lambda p: (
-            2 if str(p.patch_type) == "remove_element" else
-            1 if str(p.patch_type) in ("css_rule", "css_class", "js_snippet") else
+            3 if str(p.patch_type) == "remove_element" else
+            2 if str(p.patch_type) in _JS_TYPES else
+            1 if str(p.patch_type) in _CSS_TYPES else
             0,
             p.cluster_ids[0] if p.cluster_ids else "",
         ),
     )
 
     for patch in patches_sorted:
-        pt = str(patch.patch_type)
+        pt = str(p.patch_type) if (p := patch) else ""
 
         # ── CSS injection ──────────────────────────────────────────────────
-        if pt in ("css_rule", "css_class"):
+        if pt in _CSS_TYPES:
             new_html, ok, reason = _inject_css(current, patch)
             if ok:
                 current = new_html
                 applied += 1
                 logger.debug("patch_applicator.css_injected",
-                             patch_id=patch.resolved_patch_id)
+                             patch_id=patch.resolved_patch_id,
+                             target=patch.target_element)
             else:
                 skipped.append((patch.resolved_patch_id, reason))
             continue
 
         # ── JS injection ───────────────────────────────────────────────────
-        if pt == "js_snippet":
+        if pt in _JS_TYPES:
             new_html, ok, reason = _inject_js(current, patch)
             if ok:
                 current = new_html
                 applied += 1
                 logger.debug("patch_applicator.js_injected",
-                             patch_id=patch.resolved_patch_id)
+                             patch_id=patch.resolved_patch_id,
+                             target=patch.target_element)
             else:
                 skipped.append((patch.resolved_patch_id, reason))
             continue
 
-        # ── HTML snippet replacement ────────────────────────────────────────
-        # Skip if no meaningful change was proposed
+        # ── HTML snippet replacement ───────────────────────────────────────
         before = (patch.before_snippet or "").strip()
         after  = (patch.after_snippet  or "").strip()
 
@@ -137,10 +114,9 @@ def _apply_patches(
         if ok:
             current = new_html
             applied += 1
-            logger.debug("patch_applicator.patch_applied",
+            logger.debug("patch_applicator.html_applied",
                          patch_id=patch.resolved_patch_id,
-                         target=patch.target_element,
-                         patch_type=pt)
+                         target=patch.target_element)
         else:
             skipped.append((patch.resolved_patch_id, reason))
 
@@ -152,51 +128,46 @@ def _apply_patches(
 # ---------------------------------------------------------------------------
 
 def _inject_css(html: str, patch: ResolvedPatch) -> tuple[str, bool, str]:
-    """
-    Inject css_snippet into the HTML.
+    snippet = (patch.css_snippet or "").strip()
 
-    Priority:
-      1. Append to the last existing <style> block (avoids creating a new one).
-      2. Insert a new <style> block before </head>.
-      3. Prepend a <style> block before <body> if </head> is absent.
-    """
-    snippet = (patch.css_snippet or patch.after_snippet or "").strip()
+    # Validate: css_snippet must not be HTML
     if not snippet:
-        return html, False, "css_snippet and after_snippet are both empty"
+        logger.warning("patch_applicator.css_snippet_empty",
+                       patch_id=patch.resolved_patch_id)
+        return html, False, "css_snippet is empty"
 
-    # Deduplicate: skip if this exact rule block is already in the HTML
-    # (normalise whitespace for comparison)
-    norm_snippet = re.sub(r"\s+", " ", snippet)
-    norm_html    = re.sub(r"\s+", " ", html)
-    if norm_snippet in norm_html:
+    if _looks_like_html(snippet):
+        return html, False, (
+            f"css_snippet looks like HTML, not CSS — skipping to avoid corruption. "
+            f"Preview: {snippet[:80]!r}"
+        )
+
+    # Deduplicate
+    if _already_injected(html, snippet):
         logger.debug("patch_applicator.css_already_present",
                      patch_id=patch.resolved_patch_id)
-        return html, True, ""   # already applied — count as success
+        return html, True, ""
 
-    comment = f"\n    /* injected by patch {patch.resolved_patch_id} */\n    "
+    comment = f"\n    /* patch:{patch.resolved_patch_id} */\n    "
 
-    # Strategy 1: append inside the last <style> block
+    # Strategy 1: append inside last <style> block
     style_end = html.rfind("</style>")
     if style_end != -1:
-        injection = comment + snippet + "\n"
-        new_html  = html[:style_end] + injection + html[style_end:]
-        return new_html, True, ""
+        return html[:style_end] + comment + snippet + "\n" + html[style_end:], True, ""
 
-    # Strategy 2: insert new <style> block before </head>
+    # Strategy 2: new <style> before </head>
     head_end = html.lower().rfind("</head>")
     if head_end != -1:
-        block    = f"\n<style>\n{comment}{snippet}\n</style>\n"
-        new_html = html[:head_end] + block + html[head_end:]
-        return new_html, True, ""
+        block = f"\n<style>\n{comment}{snippet}\n</style>\n"
+        return html[:head_end] + block + html[head_end:], True, ""
 
     # Strategy 3: prepend before <body>
     body_start = html.lower().find("<body")
     if body_start != -1:
-        block    = f"<style>\n{comment}{snippet}\n</style>\n"
-        new_html = html[:body_start] + block + html[body_start:]
-        return new_html, True, ""
+        block = f"<style>\n{comment}{snippet}\n</style>\n"
+        return html[:body_start] + block + html[body_start:], True, ""
 
-    return html, False, "Could not find injection point for CSS (no </style>, </head>, or <body>)"
+    return html, False, "No CSS injection point found (no </style>, </head>, or <body>)"
 
 
 # ---------------------------------------------------------------------------
@@ -204,15 +175,29 @@ def _inject_css(html: str, patch: ResolvedPatch) -> tuple[str, bool, str]:
 # ---------------------------------------------------------------------------
 
 def _inject_js(html: str, patch: ResolvedPatch) -> tuple[str, bool, str]:
-    """
-    Inject js_snippet as a <script> block just before </body>.
+    snippet = (patch.js_snippet or "").strip()
 
-    If </body> is absent, append to end of document.
-    Deduplicates by checking if a marker comment already exists.
-    """
-    snippet = (patch.js_snippet or patch.after_snippet or "").strip()
+    # Validate: js_snippet must not be HTML
     if not snippet:
-        return html, False, "js_snippet and after_snippet are both empty"
+        logger.warning("patch_applicator.js_snippet_empty",
+                       patch_id=patch.resolved_patch_id)
+        return html, False, "js_snippet is empty"
+
+    if _looks_like_html(snippet):
+        return html, False, (
+            f"js_snippet looks like HTML, not JavaScript — skipping to avoid "
+            f"injecting invalid script. Preview: {snippet[:80]!r}"
+        )
+
+    # Ensure DOMContentLoaded wrapper
+    if "DOMContentLoaded" not in snippet:
+        snippet = (
+            'document.addEventListener("DOMContentLoaded", function() {\n'
+            f'  {snippet}\n'
+            '});'
+        )
+        logger.debug("patch_applicator.js_wrapped_dom_ready",
+                     patch_id=patch.resolved_patch_id)
 
     marker = f"/* patch:{patch.resolved_patch_id} */"
 
@@ -222,26 +207,17 @@ def _inject_js(html: str, patch: ResolvedPatch) -> tuple[str, bool, str]:
                      patch_id=patch.resolved_patch_id)
         return html, True, ""
 
-    script_block = (
-        f'\n<script>\n{marker}\n'
-        f'(function() {{\n'
-        f'  "use strict";\n'
-        f'  {snippet}\n'
-        f'}})();\n'
-        f'</script>\n'
-    )
+    script_block = f'\n<script>\n{marker}\n{snippet}\n</script>\n'
 
     body_end = html.lower().rfind("</body>")
     if body_end != -1:
-        new_html = html[:body_end] + script_block + html[body_end:]
-    else:
-        new_html = html + script_block
+        return html[:body_end] + script_block + html[body_end:], True, ""
 
-    return new_html, True, ""
+    return html + script_block, True, ""
 
 
 # ---------------------------------------------------------------------------
-# HTML snippet replacement (unchanged from original — kept for non-CSS/JS)
+# HTML snippet replacement
 # ---------------------------------------------------------------------------
 
 def _apply_single_patch(
@@ -251,34 +227,33 @@ def _apply_single_patch(
     before = patch.before_snippet.strip()
     after  = patch.after_snippet.strip()
 
+    # Strategy 1: exact match
     if before in html:
         return html.replace(before, after, 1), True, ""
 
-    norm_before = _normalise_whitespace(before)
-    if norm_before in _normalise_whitespace(html):
+    # Strategy 2: whitespace-normalised match
+    if _normalise_ws(before) in _normalise_ws(html):
         pattern  = _snippet_to_regex(before)
         new_html, n = re.subn(pattern, lambda _: after, html, count=1, flags=re.DOTALL)
         if n > 0:
             return new_html, True, ""
 
+    # Strategy 3: attribute-targeted (html_attribute only)
     if str(patch.patch_type) == "html_attribute":
         new_html, ok = _attribute_targeted_replace(html, patch)
         if ok:
             return new_html, True, ""
 
     return html, False, (
-        f"before_snippet not found in HTML (exact or normalised). "
-        f"Target: {patch.target_element!r}. "
+        f"before_snippet not found. Target: {patch.target_element!r}. "
         f"Snippet prefix: {before[:80]!r}"
     )
 
 
 def _attribute_targeted_replace(html: str, patch: ResolvedPatch) -> tuple[str, bool]:
-    sel  = patch.target_element
-    tag  = _selector_to_tag(sel)
+    tag = _selector_to_tag(patch.target_element)
     if not tag:
         return html, False
-
     tag_re = re.compile(
         rf"(<{re.escape(tag)}\b[^>]*?)(\s*/?>)",
         re.DOTALL | re.IGNORECASE,
@@ -286,24 +261,35 @@ def _attribute_targeted_replace(html: str, patch: ResolvedPatch) -> tuple[str, b
     new_attrs = _diff_attributes(patch.before_snippet, patch.after_snippet)
     if not new_attrs:
         return html, False
-
     attrs_str = " " + " ".join(
-        f'{k}="{v}"' if v else k
-        for k, v in new_attrs.items()
+        f'{k}="{v}"' if v else k for k, v in new_attrs.items()
     )
-
     def _inject(m: re.Match) -> str:
         return m.group(1) + attrs_str + m.group(2)
-
     new_html, n = tag_re.subn(_inject, html, count=1)
     return (new_html, True) if n > 0 else (html, False)
+
+
+# ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+def _looks_like_html(text: str) -> bool:
+    """Return True if text appears to be HTML rather than CSS or JavaScript."""
+    t = text.strip()
+    return bool(re.match(r"^\s*<[a-zA-Z!]", t))
+
+
+def _already_injected(html: str, snippet: str) -> bool:
+    """Check if a normalised version of snippet is already in the HTML."""
+    return _normalise_ws(snippet) in _normalise_ws(html)
 
 
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
 
-def _normalise_whitespace(text: str) -> str:
+def _normalise_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -330,7 +316,6 @@ def _diff_attributes(before: str, after: str) -> dict[str, str]:
             if k not in attrs:
                 attrs[k] = ""
         return attrs
-
     before_attrs = _extract(before)
     after_attrs  = _extract(after)
     return {k: v for k, v in after_attrs.items() if before_attrs.get(k) != v}

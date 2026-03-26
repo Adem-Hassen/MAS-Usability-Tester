@@ -7,23 +7,15 @@ from enum import Enum
 
 
 class PatchType(str, Enum):
-    # HTML fixes
-    HTML_ATTRIBUTE    = "html_attribute"    # add/modify attribute: aria-label, alt, role, tabindex
-    HTML_STRUCTURE    = "html_structure"    # add or restructure elements: wrap in <label>, add <legend>
-    CONTENT           = "content"           # rewrite text: button label, error message, placeholder
-    REMOVE_ELEMENT    = "remove_element"    # remove a broken or harmful element
-    REORDER_ELEMENTS  = "reorder_elements"  # fix tab/reading order
-    INLINE_STYLE      = "inline_style"      # add/fix style="" attribute directly on element
-
-    # CSS fixes
-    CSS_CLASS         = "css_class"         # add/modify a CSS class definition
-    CSS_RULE          = "css_rule"          # add/override a standalone CSS rule block
-                                            # use for: contrast, focus rings, spacing, visibility
-
-    # JavaScript fixes
-    JS_SNIPPET        = "js_snippet"        # inject a JS behaviour fix
-                                            # use for: keyboard traps, focus management,
-                                            # live region updates, dynamic announcements
+    HTML_ATTRIBUTE    = "html_attribute"
+    HTML_STRUCTURE    = "html_structure"
+    CONTENT           = "content"
+    REMOVE_ELEMENT    = "remove_element"
+    REORDER_ELEMENTS  = "reorder_elements"
+    INLINE_STYLE      = "inline_style"
+    CSS_CLASS         = "css_class"
+    CSS_RULE          = "css_rule"
+    JS_SNIPPET        = "js_snippet"
 
 
 class PatchProposal(BaseModel):
@@ -34,25 +26,34 @@ class PatchProposal(BaseModel):
     patch_type:         PatchType
     severity_addressed: str = Field(..., description="The dominant severity level being fixed")
 
-    target_element: str = Field(..., description="CSS selector of the element to modify")
-    description:    str = Field(..., description="Human-readable explanation of what this patch does")
+    target_element: str = Field(default="", description="CSS selector of the element to modify")
+    description:    str = Field(default="", description="Human-readable explanation of what this patch does")
 
-    before_snippet: str = Field(..., description="Original HTML/CSS/JS snippet (copy exactly from source)")
-    after_snippet:  str = Field(..., description="Proposed fixed HTML/CSS/JS snippet")
+    # For HTML patches: before/after contain the HTML snippets being swapped.
+    # For CSS/JS patches: these are empty string or null — the payload is in
+    # css_snippet / js_snippet instead.
+    before_snippet: Optional[str] = Field(
+        default="",
+        description="Original HTML snippet (for HTML patches) or '' for CSS/JS patches"
+    )
+    after_snippet: Optional[str] = Field(
+        default="",
+        description="Fixed HTML snippet (for HTML patches) or null for CSS/JS patches"
+    )
 
     css_snippet: Optional[str] = Field(
         None,
-        description="Standalone CSS rule(s) to inject when patch_type is css_rule or css_class"
+        description="Standalone CSS rule(s) to inject — required when patch_type is css_rule or css_class"
     )
     js_snippet: Optional[str] = Field(
         None,
-        description="Standalone JS block to inject before </body> when patch_type is js_snippet"
+        description="Standalone JS block to inject before </body> — required when patch_type is js_snippet"
     )
 
-    confidence:    float = Field(..., ge=0.0, le=1.0)
+    confidence:     float = Field(default=0.5, ge=0.0, le=1.0)
     wcag_reference: Optional[str] = None
-    rationale:     str = Field(..., description="Why this fix was chosen over alternatives")
-    side_effects:  list[str] = Field(default_factory=list)
+    rationale:      str = Field(default="", description="Why this fix was chosen over alternatives")
+    side_effects:   list[str] = Field(default_factory=list)
 
     model_config = {"use_enum_values": True}
 
@@ -61,17 +62,17 @@ class ConflictRecord(BaseModel):
     conflict_id:          str
     patch_id_a:           str
     patch_id_b:           str
-    target_element:       str
-    conflict_description: str
-    conflict_severity:    str
+    target_element:       str = ""
+    conflict_description: str = ""
+    conflict_severity:    str = "medium"
 
 
 class NegotiationRound(BaseModel):
     round_number:        int
     conflict_id:         str
-    agent_a_argument:    str
-    agent_b_argument:    str
-    mediator_assessment: str
+    agent_a_argument:    str = ""
+    agent_b_argument:    str = ""
+    mediator_assessment: str = ""
     resolution_reached:  bool = False
     proposed_resolution: Optional[str] = None
 
@@ -79,34 +80,34 @@ class NegotiationRound(BaseModel):
 class NegotiationSession(BaseModel):
     session_id:       str
     conflict:         ConflictRecord
-    rounds:           list[NegotiationRound]
-    final_resolution: str
+    rounds:           list[NegotiationRound] = Field(default_factory=list)
+    final_resolution: str = "unresolved"
     winning_patch_id: Optional[str] = None
     merged_snippet:   Optional[str] = None
 
 
 class ResolvedPatch(BaseModel):
     resolved_patch_id:    str
-    source_patch_ids:     list[str]
-    cluster_ids:          list[str]
+    source_patch_ids:     list[str] = Field(default_factory=list)
+    cluster_ids:          list[str] = Field(default_factory=list)
     patch_type:           PatchType
-    target_element:       str
-    description:          str
-    before_snippet:       str
-    after_snippet:        str
+    target_element:       str = ""
+    description:          str = ""
+    before_snippet:       Optional[str] = Field(default="")
+    after_snippet:        Optional[str] = Field(default="")
     css_snippet:          Optional[str] = None
     js_snippet:           Optional[str] = None
     negotiation_rounds:   int = 0
-    resolution_rationale: str
+    resolution_rationale: str = ""
     wcag_reference:       Optional[str] = None
-    confidence:           float = Field(..., ge=0.0, le=1.0)
+    confidence:           float = Field(default=0.5, ge=0.0, le=1.0)
 
     model_config = {"use_enum_values": True}
 
 
 class UnifiedPatchSet(BaseModel):
-    patches:              list[ResolvedPatch]
-    conflicts_detected:   int
-    conflicts_resolved:   int
+    patches:              list[ResolvedPatch] = Field(default_factory=list)
+    conflicts_detected:   int = 0
+    conflicts_resolved:   int = 0
     negotiation_sessions: list[NegotiationSession] = Field(default_factory=list)
-    unresolved_conflicts: list[ConflictRecord]      = Field(default_factory=list)
+    unresolved_conflicts: list[ConflictRecord] = Field(default_factory=list)

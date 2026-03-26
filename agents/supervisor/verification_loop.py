@@ -195,8 +195,8 @@ def _verify_persona(
                 "target_element":    p.target_element,
                 "patch_type":        str(p.patch_type),
                 "description":       p.description,
-                "before_snippet":    p.before_snippet[:200],
-                "after_snippet":     p.after_snippet[:200],
+                "before_snippet": (p.before_snippet or "")[:200],
+                "after_snippet":     (p.after_snippet or "")[:200],
             }
             for p in patches
         ],

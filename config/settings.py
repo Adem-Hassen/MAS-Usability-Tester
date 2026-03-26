@@ -171,7 +171,7 @@ class Settings(BaseSettings):
         )
     )
     persona_action_timeout_seconds: float = Field(
-        10.0, ge=1.0,
+        20.0, ge=1.0,
         description="Playwright timeout per action (click, type, scroll) in seconds."
     )
     persona_page_load_timeout_seconds: float = Field(

@@ -759,8 +759,15 @@ def _generate_recommender_profiles(
 ) -> list[RecommenderProfile]:
     if not clusters:
         return []
-
-    raw, error = _call_supervisor_llm(
+ 
+    def _do_call(system_prompt: str, user_prompt: str) -> tuple[str, str | None]:
+        return _call_supervisor_llm(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            task="recommender_profiles",
+        )
+ 
+    raw, error = _do_call(
         system_prompt=RECOMMENDER_PROFILE_SYSTEM,
         user_prompt=RECOMMENDER_PROFILE_USER.format(
             ui_type=ui_type,
@@ -768,13 +775,33 @@ def _generate_recommender_profiles(
             clusters_json=_build_clusters_json(clusters),
             num_clusters=len(clusters),
         ),
-        task="recommender_profiles",
     )
-
-    if error:
-        logger.error("supervisor.recommender_profiles_llm_error", error=error)
+ 
+    # Empty response — retry with a minimal prompt
+    if not error and not raw.strip():
+        logger.warning("supervisor.recommender_profiles_empty_response — retrying")
+        simple_user = (
+            f"Generate one RecommenderProfile JSON object per cluster.\n"
+            f"UI type: {ui_type}\n"
+            f"Clusters ({len(clusters)}):\n"
+            + "\n".join(
+                f"  cluster_id={c.cluster_id} label={c.cluster_label!r} "
+                f"severity={c.dominant_severity} category={c.dominant_category} "
+                f"elements={c.affected_elements[:2]}"
+                for c in clusters
+            )
+            + "\n\nOutput ONLY a JSON array of RecommenderProfile objects."
+        )
+        raw, error = _do_call(
+            system_prompt=RECOMMENDER_PROFILE_SYSTEM,
+            user_prompt=simple_user,
+        )
+ 
+    if error or not raw.strip():
+        logger.error("supervisor.recommender_profiles_llm_error",
+                     error=error or "empty response after retry")
         return _fallback_recommender_profiles(clusters)
-
+ 
     try:
         data = json.loads(raw)
         if isinstance(data, dict):
@@ -783,9 +810,20 @@ def _generate_recommender_profiles(
             data = json.loads(data)
         if not isinstance(data, list):
             raise ValueError(f"Expected list, got {type(data)}")
-
+ 
         profiles = []
         for i, item in enumerate(data):
+            # Safe coercion for numeric fields — LLM sometimes returns strings
+            try:
+                num_rec = int(item.get("num_recommenders", 1))
+            except (TypeError, ValueError):
+                num_rec = 1
+ 
+            try:
+                priority = int(item.get("priority", i + 1))
+            except (TypeError, ValueError):
+                priority = i + 1
+ 
             profiles.append(RecommenderProfile(
                 recommender_id   = item.get("recommender_id",    f"rec_{i+1}"),
                 recommender_name = item.get("recommender_name",  f"Agent-{i+1}"),
@@ -797,13 +835,15 @@ def _generate_recommender_profiles(
                 affected_elements= item.get("affected_elements", []),
                 wcag_references  = item.get("wcag_references",   []),
                 fix_strategy_hint= item.get("fix_strategy_hint", ""),
-                num_recommenders = int(item.get("num_recommenders", 1)),
-                priority         = int(item.get("priority", i + 1)),
+                num_recommenders = max(1, min(4, num_rec)),
+                priority         = max(1, priority),
             ))
         return profiles
+ 
     except Exception as e:
         logger.error("supervisor.recommender_profiles_parse_error", error=str(e))
         return _fallback_recommender_profiles(clusters)
+ 
 
 
 def _fallback_recommender_profiles(clusters: list) -> list[RecommenderProfile]:

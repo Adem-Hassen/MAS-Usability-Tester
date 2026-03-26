@@ -77,15 +77,28 @@ logger = get_logger(__name__)
 # Groq base URL
 # ---------------------------------------------------------------------------
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+MOONSHOT_BASE_URL = "https://api.moonshot.ai/v1"
 
 
 def _base_url_for(model: str) -> Optional[str]:
-    """Route model to correct endpoint."""
-    if model.startswith(("gpt-", "o1-", "o3-", "o4-","o3", "o4")):
-        return None                            # OpenAI default
+    """Route model name to the correct API base URL.
+
+    Routing table (checked in order):
+      OpenAI native   gpt-* | o1-* | o3-* | o4-*  → None (OpenAI SDK default)
+      Moonshot / Kimi kimi-*                        → api.moonshot.ai/v1
+      OpenRouter      any model containing "/"      → openrouter.ai/api/v1
+      Default         everything else               → Groq
+    """
+    if model.startswith(("gpt-", "o1-", "o3-", "o4-")):
+        return None                             # OpenAI — use SDK default base URL
+
+    if model.startswith("kimi-") or model == "moonshot":
+        return MOONSHOT_BASE_URL                # Moonshot Kimi K2 / K2.5 family
+
     if "/" in model:
-        return "https://openrouter.ai/api/v1"  # OpenRouter
-    return GROQ_BASE_URL                       # Groq
+        return "https://openrouter.ai/api/v1"  # OpenRouter (e.g. moonshotai/Kimi-K2.5)
+
+    return GROQ_BASE_URL    
 
 
 # ---------------------------------------------------------------------------

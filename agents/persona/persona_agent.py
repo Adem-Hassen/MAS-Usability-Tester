@@ -257,9 +257,10 @@ class PersonaRunner:
         """
         required = []
         for el in page_state.interactive_elements:
-            tag  = el.get("tag", "").lower()
-            typ  = el.get("type", "").lower()
-            sel  = el.get("selector", "")
+    # VisibleElement is a dataclass/model — use attribute access, not .get()
+            tag  = getattr(el, "tag", "") or ""
+            typ  = getattr(el, "input_type", "") or ""   # field is input_type, not type
+            sel  = getattr(el, "selector", "") or ""
             if not sel:
                 continue
             # Include text, email, password, tel, number — exclude button, submit, checkbox, radio
