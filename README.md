@@ -1,4 +1,4 @@
-# Nexus — Accessibility Evaluator Web App
+#MAS Usability Tester
 
 A full-stack web application that wraps the MAS-Usability-Tester pipeline behind
 a FastAPI backend and Next.js frontend, providing real-time evaluation feedback,
