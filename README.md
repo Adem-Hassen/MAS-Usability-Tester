@@ -1,4 +1,4 @@
-# Nexus — Accessibility Evaluator Web App
+#MAS Usability Tester
 
 A full-stack web application that wraps the MAS-Usability-Tester pipeline behind
 a FastAPI backend and Next.js frontend, providing real-time evaluation feedback,
@@ -65,19 +65,14 @@ GET  /api/sessions/{id}/report.pdf   → download PDF report
 ### 1. Backend
 
 ```bash
-cd nexus-web/backend
+cd backend
 
 # Create virtual env (recommended)
 python -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
+# Linux/MacOS:source venv/bin/activate          # Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
-
-# Install PDF library (pick one)
-pip install reportlab            # preferred
-# OR
-pip install fpdf2                # fallback
 
 # Run
 python main.py
@@ -102,7 +97,7 @@ PYTHONPATH=/path/to/MAS-Usability-Tester python main.py
 ### 2. Frontend
 
 ```bash
-cd nexus-web/frontend
+cd frontend
 
 npm install
 npm run dev
@@ -194,11 +189,3 @@ Download the PDF report.
 - The PDF library (reportlab) must be installed separately — add to your Docker image
 
 ---
-
-## Design System
-
-**Aesthetic:** Precision instrument — dark editorial with amber/teal accent system.
-Syne (display) + DM Sans (body) + DM Mono (code/data).
-
-Color tokens defined in `globals.css` as CSS custom properties:
-`--bg`, `--surface`, `--border`, `--text`, `--amber`, `--teal`, `--danger`, `--ok`
