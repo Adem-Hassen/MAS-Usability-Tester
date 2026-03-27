@@ -9,7 +9,7 @@ issue detection, patch previews, and PDF report download.
 ## Architecture
 
 ```
-nexus-web/
+
 ├── backend/
 │   ├── main.py            ← FastAPI app + all REST/SSE endpoints
 │   ├── session_store.py   ← In-memory session store with SSE pub/sub queues
@@ -65,7 +65,6 @@ GET  /api/sessions/{id}/report.pdf   → download PDF report
 ### 1. Backend
 
 ```bash
-cd backend
 
 # Create virtual env (recommended)
 python -m venv venv
@@ -75,7 +74,7 @@ python -m venv venv
 pip install -r requirements.txt
 
 # Run
-python main.py
+uvicorn backend.main:app --reload
 # → API available at http://localhost:8000
 # → Swagger docs at http://localhost:8000/api/docs
 ```
