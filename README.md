@@ -10,26 +10,66 @@ issue detection, patch previews, and PDF report download.
 
 ```
 
-├── backend/
-│   ├── main.py            ← FastAPI app + all REST/SSE endpoints
-│   ├── session_store.py   ← In-memory session store with SSE pub/sub queues
-│   ├── pipeline_runner.py ← Bridges sessions to MAS pipeline (simulation fallback)
-│   └── requirements.txt
-└── frontend/
-    ├── src/
-    │   ├── app/
-    │   │   ├── layout.tsx    ← Root layout
-    │   │   ├── page.tsx      ← Main dashboard (upload + live view + results)
-    │   │   └── globals.css   ← Design tokens + global styles
-    │   ├── hooks/
-    │   │   └── usePipeline.ts ← Central state machine + SSE consumer
-    │   ├── lib/
-    │   │   └── api.ts        ← Typed API client
-    │   └── types/
+MAS-Usability-Tester/
+    ├── backend/
+    │     ├── main.py            ← FastAPI app + all REST/SSE endpoints
+    │     ├── session_store.py   ← In-memory session store with SSE pub/sub queues
+    │     ├── pipeline_runner.py ← Bridges sessions to MAS pipeline (simulation fallback)
+    │     └── requirements.txt
+    └── frontend/
+      ├── src/
+    │     ├── app/
+    │     │   ├── layout.tsx    ← Root layout
+    │     │   ├── page.tsx      ← Main dashboard (upload + live view + results)
+    │     │   └── globals.css   ← Design tokens + global styles
+    │     ├── hooks/
+    │     │   └── usePipeline.ts ← Central state machine + SSE consumer
+    │     ├── lib/
+    │     │   └── api.ts        ← Typed API client
+    │     └── types/
     │       └── index.ts      ← Shared TypeScript types
-    ├── next.config.js
-    ├── tailwind.config.js
-    └── package.json
+        ├── next.config.js
+        ├── tailwind.config.js
+        └── package.json
+    ├── agents/
+    │   ├── persona/
+    │   │   ├── agent_sandbox.py
+    │   │   ├── persona_agent.py
+    │   │   └── playwright_engine.py
+    │   └── supervisor/
+    │       └── supervisor_agent.py
+    |       └── patch_applicator.py
+    |       └── report_generator.py
+    |       └── verficiation_loop.py
+    │   └── recommender/
+    │       └──recommender_agent.py
+    |       └── conflict_resolver.py       
+    ├── cofig/
+    │   ├── logging_config.py
+    │   ├── persona_templates.yaml
+    │   └── settings.py
+    ├── core/
+    │   └── state.py
+    │   └── graph.py
+    ├── monitoring/
+    │   └── logger.py
+    ├── prompts/
+    │   ├── persona_prompts.py
+    │   ├── recommender_prompts.py
+    │   └── supervisor_prompts.py
+    ├── schemas/
+    │   ├── issue_schema.py
+    │   ├── patch_schema.py
+    │   ├── persona_schema.py
+    │   └── report_schema.py
+    ├── tools/
+    │   └── analysis/
+    │       └── cluster_engine.py
+    |   └── rate_limiter.py
+    ├── .env
+    ├── .gitignore
+    ├── main.py
+    └── requirements.txt
 ```
 
 ### Data flow
