@@ -123,15 +123,7 @@ The backend auto-detects whether the MAS pipeline is installed.
 If not, it runs a **simulation mode** that produces realistic fake events
 and writes placeholder fixed HTML — useful for frontend development.
 
-#### Connecting to the real MAS pipeline
 
-The backend imports `from core.graph import run_evaluation` from the parent
-directory. Make sure you run it from inside the `nexus-web/backend/` folder
-and that `../../core/` is importable, or set `PYTHONPATH`:
-
-```bash
-PYTHONPATH=/path/to/MAS-Usability-Tester python main.py
-```
 
 ### 2. Frontend
 
