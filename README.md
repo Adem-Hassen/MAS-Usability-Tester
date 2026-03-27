@@ -189,11 +189,3 @@ Download the PDF report.
 - The PDF library (reportlab) must be installed separately — add to your Docker image
 
 ---
-
-## Design System
-
-**Aesthetic:** Precision instrument — dark editorial with amber/teal accent system.
-Syne (display) + DM Sans (body) + DM Mono (code/data).
-
-Color tokens defined in `globals.css` as CSS custom properties:
-`--bg`, `--surface`, `--border`, `--text`, `--amber`, `--teal`, `--danger`, `--ok`
