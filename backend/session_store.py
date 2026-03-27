@@ -56,12 +56,14 @@ class SessionStore:
         self._sessions: dict[str, Session] = {}
         self._events:   dict[str, list[dict]] = {}       # buffered events
         self._queues:   dict[str, list[asyncio.Queue]] = {}  # subscriber queues
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     # ------------------------------------------------------------------
     # Session lifecycle
     # ------------------------------------------------------------------
 
     async def create(self, session_id: str, files: list[UploadFile]) -> Session:
+        self._loop = asyncio.get_running_loop()
         session_dir = SESSIONS_DIR / session_id
         input_dir   = session_dir / "input"
         output_dir  = session_dir / "output"
@@ -104,10 +106,13 @@ class SessionStore:
         """Emit an event to all subscribers and buffer it."""
         event = {"kind": kind, "ts": datetime.utcnow().isoformat(), **payload}
         if session_id in self._events:
-            self._events[session_id].append(event)
-        for q in self._queues.get(session_id, []):
-            q.put_nowait(event)
-
+           self._events[session_id].append(event)
+    # Thread-safe: schedule put_nowait on the event loop from any thread
+        loop = self._loop
+        if loop is None:
+         return
+        for q in list(self._queues.get(session_id, [])):
+          loop.call_soon_threadsafe(q.put_nowait, event)
     def get_events(self, session_id: str) -> list[dict]:
         return list(self._events.get(session_id, []))
 
@@ -116,7 +121,7 @@ class SessionStore:
         self._queues.setdefault(session_id, []).append(q)
         try:
             while True:
-                event = await asyncio.wait_for(q.get(), timeout=30)
+                event = await asyncio.wait_for(q.get(), timeout=120)
                 yield event
                 if event.get("kind") in (EventKind.DONE, EventKind.ERROR):
                     break

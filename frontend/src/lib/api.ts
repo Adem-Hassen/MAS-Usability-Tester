@@ -22,7 +22,9 @@ export async function runSession(sessionId: string): Promise<void> {
 }
 
 export function streamSession(sessionId: string): EventSource {
-  return new EventSource(`${BASE}/sessions/${sessionId}/stream`);
+  // EventSource bypasses the Next.js proxy — must hit FastAPI directly
+  const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+  return new EventSource(`${backendUrl}/api/sessions/${sessionId}/stream`);
 }
 
 export async function getResults(sessionId: string) {

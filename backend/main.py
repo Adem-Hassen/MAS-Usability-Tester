@@ -13,16 +13,12 @@ Endpoints:
 """
 
 from __future__ import annotations
-
-import asyncio
 import json
-import os
 import sys
-import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile, BackgroundTasks
@@ -35,15 +31,15 @@ from fastapi.responses import FileResponse, StreamingResponse
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from session_store import SessionStore, Session, SessionStatus, EventKind
-from pipeline_runner import run_pipeline_async
+from backend.session_store import SessionStore, Session, SessionStatus, EventKind
+from backend.pipeline_runner import run_pipeline_async
 
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="Nexus Accessibility Evaluator API",
+    title="MAS Usability Tester",
     version="1.0.0",
     docs_url="/api/docs",
 )
@@ -105,15 +101,20 @@ async def stream_session(session_id: str):
 
     async def event_generator() -> AsyncGenerator[str, None]:
         # Send buffered events first (for reconnect support)
-        buffered = store.get_events(session_id)
-        for ev in buffered:
-            yield _sse(ev)
+        for ev in store.get_events(session_id):
+           yield _sse(ev)
 
-        # Then stream new events
-        async for ev in store.subscribe(session_id):
-            yield _sse(ev)
-            if ev.get("kind") in (EventKind.DONE, EventKind.ERROR):
-                break
+    # Heartbeat task — sends a comment every 15s to keep connection alive
+        async def with_heartbeat():
+          async for ev in store.subscribe(session_id):
+             yield ev
+
+        async for ev in with_heartbeat():
+          yield _sse(ev)
+          if ev.get("kind") in (EventKind.DONE, EventKind.ERROR):
+            break
+        # Yield a SSE comment as keepalive (browsers ignore comment lines)
+          yield ": keepalive\n\n"
 
     return StreamingResponse(
         event_generator(),
