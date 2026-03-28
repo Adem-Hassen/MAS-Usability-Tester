@@ -30,8 +30,23 @@ def patch_applicator_node(state: dict) -> dict:
     logger.info("patch_applicator.start",
                 total_patches=len(unified.patches),
                 html_length=len(html_content))
-
+    
+    
+    for patch in unified.patches:
+        logger.info("patch_applicator.patch_contents",
+                 patch_id=patch.resolved_patch_id,
+                 patch_type=str(patch.patch_type),
+                 has_before=bool(patch.before_snippet),
+                 has_after=bool(patch.after_snippet),
+                 has_css=bool(patch.css_snippet),
+                 has_js=bool(patch.js_snippet),
+                 before_preview=(patch.before_snippet or "")[:60],
+                 after_preview=(patch.after_snippet or "")[:60],
+                 css_preview=(patch.css_snippet or "")[:60],
+                 js_preview=(patch.js_snippet or "")[:60])
     patched_html, applied_count, skipped = _apply_patches(html_content, unified.patches)
+
+    
 
     logger.info("patch_applicator.complete", applied=applied_count, skipped=len(skipped))
     for patch_id, reason in skipped:
@@ -130,7 +145,10 @@ def _apply_patches(
 def _inject_css(html: str, patch: ResolvedPatch) -> tuple[str, bool, str]:
     snippet = (patch.css_snippet or "").strip()
 
-    # Validate: css_snippet must not be HTML
+    if not snippet and patch.after_snippet:
+        candidate = patch.after_snippet.strip()
+        if not _looks_like_html(candidate):
+            snippet = candidate
     if not snippet:
         logger.warning("patch_applicator.css_snippet_empty",
                        patch_id=patch.resolved_patch_id)
@@ -177,7 +195,12 @@ def _inject_css(html: str, patch: ResolvedPatch) -> tuple[str, bool, str]:
 def _inject_js(html: str, patch: ResolvedPatch) -> tuple[str, bool, str]:
     snippet = (patch.js_snippet or "").strip()
 
-    # Validate: js_snippet must not be HTML
+    if not snippet and patch.after_snippet:
+        
+        candidate = patch.after_snippet.strip()
+        if not _looks_like_html(candidate):
+         snippet = candidate
+
     if not snippet:
         logger.warning("patch_applicator.js_snippet_empty",
                        patch_id=patch.resolved_patch_id)

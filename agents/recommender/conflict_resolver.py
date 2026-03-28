@@ -463,6 +463,8 @@ def _build_resolved_patches(
                 description=f"Merged fix: {p.description}",
                 before_snippet=p.before_snippet,
                 after_snippet=snippet,
+                css_snippet=p.css_snippet,
+                js_snippet=p.js_snippet,
                 negotiation_rounds=rounds_by_conflict.get(conflict.conflict_id, 0),
                 resolution_rationale=rationale,
                 wcag_reference=p.wcag_reference,
@@ -507,6 +509,8 @@ def _proposal_to_resolved(
         description=proposal.description,
         before_snippet=proposal.before_snippet,
         after_snippet=proposal.after_snippet,
+        css_snippet=proposal.css_snippet,
+        js_snippet=proposal.js_snippet,
         negotiation_rounds=negotiation_rounds,
         resolution_rationale=(
             "No conflict — patch accepted as-is."

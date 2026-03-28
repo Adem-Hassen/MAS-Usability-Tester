@@ -1,41 +1,4 @@
 # config/logging_config.py
-"""
-Logging configuration for the UI Evaluation System.
-
-Responsibilities:
-  - Configure structlog once at startup (idempotent — safe to call multiple times)
-  - Bridge stdlib logging into structlog so LangGraph, httpx, google-auth all appear
-  - Provide get_logger() for all modules
-  - Provide context helpers to bind simulation/node metadata to all log lines
-
-Two output formats:
-  console  — colored, human-readable. Used during development.
-  json     — structured JSON per line. Used in production / log ingestion (Loki, ELK).
-
-Usage:
-    # main.py — call once at startup
-    from config.logging_config import setup_logging
-    setup_logging(log_level="INFO", log_format="console")
-
-    # any module
-    from config.logging_config import get_logger
-    logger = get_logger(__name__)
-    logger.info("supervisor.start", html_path="/tmp/ui.html", personas=3)
-    logger.warning("gemini.retry", attempt=2, delay=4.0)
-    logger.error("parse.failed", task="ui_analysis", error="JSONDecodeError")
-
-    # inside a persona simulation
-    from config.logging_config import bind_simulation_context, clear_simulation_context
-    bind_simulation_context(simulation_id="sim_abc", persona_id="persona_1")
-    logger.info("step.start", step=3)   # automatically includes simulation_id + persona_id
-    clear_simulation_context()
-
-    # inside a pipeline node
-    from config.logging_config import bind_node_context, clear_node_context
-    bind_node_context(node="clustering_node", run_id="run_xyz")
-    logger.info("clustering.start", issues=12)
-    clear_node_context()
-"""
 
 from __future__ import annotations
 
