@@ -196,27 +196,5 @@ Download the PDF report.
 
 ---
 
-## Frontend Features
 
-- **Drag-and-drop upload** — accepts up to 5 `.html` files with client-side validation
-- **Real-time pipeline steps** — animated dot indicators per step (idle/running/done/error)
-- **Live progress bar** — smooth 0–100% with label from backend
-- **Live log stream** — timestamped, colour-coded by level
-- **Issue cards** — severity badges, streaming in as detected
-- **Patch cards** — type badges (HTML / CSS / JS), streaming in as applied
-- **Page filter** — sidebar filter to view issues/patches per page
-- **Results dashboard** — score ring, summary, expandable recommendations
-- **Download buttons** — fixed HTML and PDF report per page / session
 
----
-
-## Production Considerations
-
-- Replace the in-memory `SessionStore` with **Redis** pub/sub for multi-worker deployments
-- Add authentication middleware to protect session endpoints
-- Store sessions and files in **S3** instead of local disk
-- Add session TTL and cleanup job (sessions accumulate in `backend/sessions/`)
-- Use `gunicorn` + `uvicorn` workers behind nginx for production serving
-- The PDF library (reportlab) must be installed separately — add to your Docker image
-
----
