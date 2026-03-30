@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -16,6 +17,71 @@ from config.settings import settings
 from monitoring.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Shared browser singleton — avoids N browser process spawns on Windows
+# Each persona gets its own BrowserContext (isolated cookies, storage,
+# viewport) but they all share one Chromium process.
+# ---------------------------------------------------------------------------
+
+class _SharedBrowser:
+    """Lazy singleton: one Playwright + one Chromium browser for all personas."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._playwright: Optional[Playwright] = None
+        self._browser: Optional[Browser] = None
+        self._ref_count = 0
+
+    def acquire(self) -> tuple[Playwright, Browser]:
+        """Return the shared (playwright, browser) pair, launching if needed."""
+        with self._lock:
+            if self._browser is None or not self._browser.is_connected():
+                if self._playwright is not None:
+                    try:
+                        self._playwright.stop()
+                    except Exception:
+                        pass
+                self._playwright = sync_playwright().start()
+                self._browser = self._playwright.chromium.launch(
+                    headless=settings.persona_headless,
+                    args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+                )
+                logger.info("shared_browser.launched")
+            self._ref_count += 1
+            return self._playwright, self._browser
+
+    def release(self) -> None:
+        """Decrement ref count. Browser stays alive for reuse."""
+        with self._lock:
+            self._ref_count = max(0, self._ref_count - 1)
+
+    def shutdown(self) -> None:
+        """Close the shared browser and Playwright. Call at pipeline end."""
+        with self._lock:
+            if self._browser is not None:
+                try:
+                    self._browser.close()
+                except Exception:
+                    pass
+                self._browser = None
+            if self._playwright is not None:
+                try:
+                    self._playwright.stop()
+                except Exception:
+                    pass
+                self._playwright = None
+            self._ref_count = 0
+            logger.info("shared_browser.shutdown")
+
+
+_shared_browser = _SharedBrowser()
+
+
+def shutdown_shared_browser() -> None:
+    """Public API: call after all personas have finished to release Chromium."""
+    _shared_browser.shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +202,11 @@ class PlaywrightEngine:
     """
     One isolated Chromium browser context for one persona.
 
+    Uses a shared Chromium browser process (via _shared_browser singleton)
+    for performance. Each persona gets its own BrowserContext with isolated
+    cookies, localStorage, viewport — functionally equivalent to a fresh
+    browser but without the process-spawn overhead.
+
     Use as a context manager:
         with PlaywrightEngine(persona_id) as engine:
             engine.open(sandbox_path)
@@ -145,8 +216,6 @@ class PlaywrightEngine:
 
     def __init__(self, persona_id: str):
         self.persona_id = persona_id
-        self._playwright: Optional[Playwright] = None
-        self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
         self._pending_alert: Optional[str] = None
@@ -157,7 +226,8 @@ class PlaywrightEngine:
 
     def open(self, sandbox_path: str, storage_seed: Optional[dict] = None) -> None:
         """
-        Launch browser, seed storage, and load the sandbox page.
+        Acquire shared browser, create an isolated context, seed storage,
+        and load the sandbox page.
 
         Args:
             sandbox_path:  Path to the sandboxed HTML file (absolute or file://).
@@ -170,12 +240,10 @@ class PlaywrightEngine:
         action_ms = int(settings.persona_action_timeout_seconds * 1000)
         nav_ms    = int(settings.persona_page_load_timeout_seconds * 1000)
 
-        self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(
-            headless=settings.persona_headless,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-        )
-        self._context = self._browser.new_context(
+        # Reuse shared Playwright + Chromium (only one process for all personas)
+        _pw, browser = _shared_browser.acquire()
+
+        self._context = browser.new_context(
             viewport={"width": 1280, "height": 720},
             locale="en-US",
             timezone_id="America/New_York",
@@ -230,14 +298,15 @@ class PlaywrightEngine:
                     title=page_title, url=final_url, interactive_elements=elem_count)
 
     def close(self) -> None:
+        """Close only this persona's context — the shared browser stays alive."""
         try:
-            if self._context:    self._context.close()
-            if self._browser:    self._browser.close()
-            if self._playwright: self._playwright.stop()
+            if self._context:
+                self._context.close()
         except Exception as e:
             logger.warning("browser.close_error", persona_id=self.persona_id, error=str(e))
         finally:
-            self._page = self._context = self._browser = self._playwright = None
+            self._page = self._context = None
+            _shared_browser.release()
         logger.debug("browser.closed", persona_id=self.persona_id)
 
     def __enter__(self):

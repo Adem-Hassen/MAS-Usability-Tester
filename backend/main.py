@@ -13,8 +13,13 @@ Endpoints:
 """
 
 from __future__ import annotations
-import json
+
 import sys
+if sys.platform == "win32":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+import json
 import uuid
 from datetime import datetime
 from pathlib import Path

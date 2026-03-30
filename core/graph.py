@@ -25,6 +25,7 @@ from agents.supervisor.supervisor_agent import (
     recommender_profile_node as _rec_profile_node,
 )
 from agents.persona.persona_agent          import persona_node          as _persona_node
+from agents.persona.playwright_engine      import shutdown_shared_browser
 from tools.analysis.cluster_engine         import clustering_node       as _clustering_node
 from agents.recommender.recommender_agent  import recommender_node      as _recommender_node
 from agents.recommender.conflict_resolver  import conflict_resolver_node as _conflict_node
@@ -544,7 +545,11 @@ def run_evaluation(
     )
 
     logger.info("run_evaluation.start", pages=len(pages))
-    result  = _get_graph().invoke(initial)
-    reports = result.get("reports", [])
-    logger.info("run_evaluation.done", reports=len(reports))
-    return result
+    try:
+        result  = _get_graph().invoke(initial)
+        reports = result.get("reports", [])
+        logger.info("run_evaluation.done", reports=len(reports))
+        return result
+    finally:
+        # Clean up the shared Chromium browser process
+        shutdown_shared_browser()

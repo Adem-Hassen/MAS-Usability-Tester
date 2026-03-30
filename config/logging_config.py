@@ -36,6 +36,8 @@ _NOISY_LOGGERS: list[tuple[str, int]] = [
     ("langgraph",              logging.WARNING),
     ("langchain",              logging.WARNING),
     ("langchain_core",         logging.WARNING),
+    ("openai",                 logging.WARNING),
+    ("openai._base_client",    logging.WARNING),
 ]
 
 
@@ -87,7 +89,10 @@ def setup_logging(log_level: str = "INFO", log_format: str = "console") -> None:
         # Colored, human-readable output with aligned columns.
         processors = shared_processors + [
             # Render exceptions as clean plain-text tracebacks
+            # Force colors=isatty() to avoid ANSI escape issues on Windows
+            # non-TTY contexts and the '*' prefix bullet formatting problem.
             structlog.dev.ConsoleRenderer(
+                colors=sys.stdout.isatty(),
                 exception_formatter=structlog.dev.plain_traceback,
                 sort_keys=False,
             ),

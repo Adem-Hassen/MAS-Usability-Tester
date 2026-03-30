@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import sys
+if sys.platform == "win32":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import argparse
 import os
-import sys
 import time
 from pathlib import Path
 

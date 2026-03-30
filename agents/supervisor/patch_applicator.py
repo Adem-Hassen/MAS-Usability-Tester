@@ -33,7 +33,7 @@ def patch_applicator_node(state: dict) -> dict:
     
     
     for patch in unified.patches:
-        logger.info("patch_applicator.patch_contents",
+        logger.debug("patch_applicator.patch_contents",
                  patch_id=patch.resolved_patch_id,
                  patch_type=str(patch.patch_type),
                  has_before=bool(patch.before_snippet),
@@ -44,6 +44,7 @@ def patch_applicator_node(state: dict) -> dict:
                  after_preview=(patch.after_snippet or "")[:60],
                  css_preview=(patch.css_snippet or "")[:60],
                  js_preview=(patch.js_snippet or "")[:60])
+        
     patched_html, applied_count, skipped = _apply_patches(html_content, unified.patches)
 
     
@@ -84,56 +85,85 @@ def _apply_patches(
     )
 
     for patch in patches_sorted:
-        pt = str(p.patch_type) if (p := patch) else ""
+        pt = str(patch.patch_type) if patch else ""
+        applied_css  = False
+        applied_js   = False
 
-        # ── CSS injection ──────────────────────────────────────────────────
+        # ── Primary: CSS injection ─────────────────────────────────────────
         if pt in _CSS_TYPES:
             new_html, ok, reason = _inject_css(current, patch)
             if ok:
                 current = new_html
                 applied += 1
+                applied_css = True
                 logger.debug("patch_applicator.css_injected",
                              patch_id=patch.resolved_patch_id,
                              target=patch.target_element)
             else:
                 skipped.append((patch.resolved_patch_id, reason))
-            continue
 
-        # ── JS injection ───────────────────────────────────────────────────
-        if pt in _JS_TYPES:
+        # ── Primary: JS injection ──────────────────────────────────────────
+        elif pt in _JS_TYPES:
             new_html, ok, reason = _inject_js(current, patch)
             if ok:
                 current = new_html
                 applied += 1
+                applied_js = True
                 logger.debug("patch_applicator.js_injected",
                              patch_id=patch.resolved_patch_id,
                              target=patch.target_element)
             else:
                 skipped.append((patch.resolved_patch_id, reason))
-            continue
 
-        # ── HTML snippet replacement ───────────────────────────────────────
-        before = (patch.before_snippet or "").strip()
-        after  = (patch.after_snippet  or "").strip()
-
-        if not before or not after:
-            skipped.append((patch.resolved_patch_id,
-                            "empty before_snippet or after_snippet"))
-            continue
-        if before == after:
-            skipped.append((patch.resolved_patch_id,
-                            "before_snippet == after_snippet — no change"))
-            continue
-
-        new_html, ok, reason = _apply_single_patch(current, patch)
-        if ok:
-            current = new_html
-            applied += 1
-            logger.debug("patch_applicator.html_applied",
-                         patch_id=patch.resolved_patch_id,
-                         target=patch.target_element)
+        # ── Primary: HTML snippet replacement ──────────────────────────────
         else:
-            skipped.append((patch.resolved_patch_id, reason))
+            before = (patch.before_snippet or "").strip()
+            after  = (patch.after_snippet  or "").strip()
+
+            if not before or not after:
+                skipped.append((patch.resolved_patch_id,
+                                "empty before_snippet or after_snippet"))
+            elif before == after:
+                skipped.append((patch.resolved_patch_id,
+                                "before_snippet == after_snippet — no change"))
+            else:
+                new_html, ok, reason = _apply_single_patch(current, patch)
+                if ok:
+                    current = new_html
+                    applied += 1
+                    logger.debug("patch_applicator.html_applied",
+                                 patch_id=patch.resolved_patch_id,
+                                 target=patch.target_element)
+                else:
+                    skipped.append((patch.resolved_patch_id, reason))
+
+        # ── Companion CSS: inject css_snippet even if primary type wasn't CSS ──
+        if not applied_css and (patch.css_snippet or "").strip():
+            new_html, ok, reason = _inject_css(current, patch)
+            if ok:
+                current = new_html
+                applied += 1
+                logger.debug("patch_applicator.companion_css_injected",
+                             patch_id=patch.resolved_patch_id,
+                             target=patch.target_element)
+            else:
+                logger.debug("patch_applicator.companion_css_skipped",
+                             patch_id=patch.resolved_patch_id,
+                             reason=reason)
+
+        # ── Companion JS: inject js_snippet even if primary type wasn't JS ──
+        if not applied_js and (patch.js_snippet or "").strip():
+            new_html, ok, reason = _inject_js(current, patch)
+            if ok:
+                current = new_html
+                applied += 1
+                logger.debug("patch_applicator.companion_js_injected",
+                             patch_id=patch.resolved_patch_id,
+                             target=patch.target_element)
+            else:
+                logger.debug("patch_applicator.companion_js_skipped",
+                             patch_id=patch.resolved_patch_id,
+                             reason=reason)
 
     return current, applied, skipped
 
