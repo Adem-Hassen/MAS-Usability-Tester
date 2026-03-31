@@ -187,16 +187,32 @@ def _detect_conflicts(proposals: list[PatchProposal]) -> list[ConflictRecord]:
 
 def _heuristic_conflict_detection(proposals: list[PatchProposal]) -> list[ConflictRecord]:
     """
-    Fallback: two patches conflict if they share the same target_element.
-    Creates one ConflictRecord per conflicting pair.
+    Fallback: two patches conflict if they share the same target_element
+    AND the same patch-type category.
+
+    Cross-type patches (e.g. one HTML + one CSS on the same element) are
+    orthogonal and NOT conflicting — per the architecture doc and the LLM
+    conflict detection prompt which explicitly lists these as non-conflicts.
     """
+    _CSS_CATS = {"css_rule", "css_class"}
+    _JS_CATS  = {"js_snippet"}
+
+    def _type_category(pt: str) -> str:
+        if pt in _CSS_CATS:
+            return "css"
+        if pt in _JS_CATS:
+            return "js"
+        return "html"
+
     conflicts = []
-    seen: dict[str, list[PatchProposal]] = {}
+    # Group by (target_element, type_category) — only same-category can conflict
+    seen: dict[tuple[str, str], list[PatchProposal]] = {}
     for p in proposals:
-        seen.setdefault(p.target_element, []).append(p)
+        key = (p.target_element, _type_category(str(p.patch_type)))
+        seen.setdefault(key, []).append(p)
 
     conflict_idx = 1
-    for selector, group in seen.items():
+    for (selector, _cat), group in seen.items():
         if len(group) < 2:
             continue
         for i in range(len(group)):
@@ -207,8 +223,8 @@ def _heuristic_conflict_detection(proposals: list[PatchProposal]) -> list[Confli
                     patch_id_b=group[j].patch_id,
                     target_element=selector,
                     conflict_description=(
-                        f"Both patches target '{selector}' — potential attribute or "
-                        "structure conflict detected by heuristic fallback."
+                        f"Both patches target '{selector}' with same type category "
+                        f"'{_cat}' — potential conflict detected by heuristic fallback."
                     ),
                     conflict_severity="medium",
                 ))

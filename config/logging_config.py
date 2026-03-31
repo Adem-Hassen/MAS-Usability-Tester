@@ -105,7 +105,7 @@ def setup_logging(log_level: str = "INFO", log_format: str = "console") -> None:
         # This is faster than filtering inside processors.
         wrapper_class=structlog.make_filtering_bound_logger(level),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+        logger_factory=structlog.PrintLoggerFactory(),
         # Cache the logger on first use for performance.
         # WARNING: this means setup_logging() MUST be called before any get_logger() call,
         # and MUST NOT be called again after the first get_logger() call.

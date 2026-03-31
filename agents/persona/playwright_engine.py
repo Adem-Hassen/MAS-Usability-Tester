@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import base64
+import os
 import threading
 import time
+
+# Suppress trailing Node 24+ `url.parse()` deprecation warnings from Playwright's internal driver
+os.environ["NODE_OPTIONS"] = os.environ.get("NODE_OPTIONS", "") + " --no-deprecation"
 from dataclasses import dataclass
 from typing import Optional
 
@@ -25,32 +29,60 @@ logger = get_logger(__name__)
 # viewport) but they all share one Chromium process.
 # ---------------------------------------------------------------------------
 
+import subprocess
+import urllib.request
+import time
+
 class _SharedBrowser:
-    """Lazy singleton: one Playwright + one Chromium browser for all personas."""
+    """Lazy singleton: runs one Chromium server (via CDP) for all personas."""
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._playwright: Optional[Playwright] = None
-        self._browser: Optional[Browser] = None
+        self._proc: Optional[subprocess.Popen] = None
+        self._cdp_url: Optional[str] = None
         self._ref_count = 0
 
-    def acquire(self) -> tuple[Playwright, Browser]:
-        """Return the shared (playwright, browser) pair, launching if needed."""
+    def get_cdp_url(self) -> str:
+        """Launch the Chromium server if needed, and return its CDP WebSocket URL."""
         with self._lock:
-            if self._browser is None or not self._browser.is_connected():
-                if self._playwright is not None:
-                    try:
-                        self._playwright.stop()
-                    except Exception:
-                        pass
-                self._playwright = sync_playwright().start()
-                self._browser = self._playwright.chromium.launch(
-                    headless=settings.persona_headless,
-                    args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            if self._proc is None or self._proc.poll() is not None:
+                # 1. Locate the Playwright-bundled Chromium executable
+                with sync_playwright() as p:
+                    executable = p.chromium.executable_path
+
+                # 2. Launch it with remote-debugging
+                args = [
+                    executable,
+                    "--remote-debugging-port=9222",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ]
+                if settings.persona_headless:
+                    args.append("--headless=new")
+
+                self._proc = subprocess.Popen(
+                    args,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
                 )
-                logger.info("shared_browser.launched")
+
+                # 3. Wait for the WebSocket endpoint to become available
+                endpoint = "http://127.0.0.1:9222"
+                for _ in range(50):
+                    try:
+                        urllib.request.urlopen(f"{endpoint}/json/version", timeout=0.1)
+                        self._cdp_url = endpoint
+                        break
+                    except Exception:
+                        time.sleep(0.1)
+                else:
+                    raise RuntimeError("Failed to connect to shared Chromium CDP port 9222")
+
+                logger.info("shared_browser.launched_subprocess", url=self._cdp_url)
+
             self._ref_count += 1
-            return self._playwright, self._browser
+            return self._cdp_url
 
     def release(self) -> None:
         """Decrement ref count. Browser stays alive for reuse."""
@@ -58,22 +90,14 @@ class _SharedBrowser:
             self._ref_count = max(0, self._ref_count - 1)
 
     def shutdown(self) -> None:
-        """Close the shared browser and Playwright. Call at pipeline end."""
+        """Terminate the background Chromium OS process directly."""
         with self._lock:
-            if self._browser is not None:
-                try:
-                    self._browser.close()
-                except Exception:
-                    pass
-                self._browser = None
-            if self._playwright is not None:
-                try:
-                    self._playwright.stop()
-                except Exception:
-                    pass
-                self._playwright = None
-            self._ref_count = 0
-            logger.info("shared_browser.shutdown")
+            if self._proc:
+                self._proc.terminate()
+                self._proc = None
+                self._cdp_url = None
+                self._ref_count = 0
+                logger.info("shared_browser.shutdown")
 
 
 _shared_browser = _SharedBrowser()
@@ -216,9 +240,10 @@ class PlaywrightEngine:
 
     def __init__(self, persona_id: str):
         self.persona_id = persona_id
+        self._playwright: Optional[Playwright] = None
+        self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
-        self._pending_alert: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -240,10 +265,12 @@ class PlaywrightEngine:
         action_ms = int(settings.persona_action_timeout_seconds * 1000)
         nav_ms    = int(settings.persona_page_load_timeout_seconds * 1000)
 
-        # Reuse shared Playwright + Chromium (only one process for all personas)
-        _pw, browser = _shared_browser.acquire()
+        # Thread-local Playwright instance connects to the shared Chromium process
+        cdp_url = _shared_browser.get_cdp_url()
+        self._playwright = sync_playwright().start()
+        self._browser = self._playwright.chromium.connect_over_cdp(cdp_url)
 
-        self._context = browser.new_context(
+        self._context = self._browser.new_context(
             viewport={"width": 1280, "height": 720},
             locale="en-US",
             timezone_id="America/New_York",
@@ -274,8 +301,16 @@ class PlaywrightEngine:
                     sessionStorage_keys=list(ss.keys()),
                 )
 
+        # Mock JS native dialogs to prevent Playwright CDP unhandled promise crashes
+        # when a dialog races with a page navigation.
+        self._context.add_init_script("""
+            window.__pw_alerts = [];
+            window.alert = function(msg) { window.__pw_alerts.push(String(msg)); };
+            window.confirm = function(msg) { window.__pw_alerts.push(String(msg)); return false; };
+            window.prompt = function(msg) { window.__pw_alerts.push(String(msg)); return null; };
+        """)
+
         self._page = self._context.new_page()
-        self._page.on("dialog", self._handle_dialog)
 
         url = sandbox_path if sandbox_path.startswith("file://") else f"file://{sandbox_path}"
         self._page.goto(url, wait_until="domcontentloaded")
@@ -298,14 +333,22 @@ class PlaywrightEngine:
                     title=page_title, url=final_url, interactive_elements=elem_count)
 
     def close(self) -> None:
-        """Close only this persona's context — the shared browser stays alive."""
+        """Close this persona's isolated context and thread-local Playwright."""
         try:
             if self._context:
                 self._context.close()
+            if self._browser:
+                self._browser.close() # Safely disconnects from CDP
         except Exception as e:
             logger.warning("browser.close_error", persona_id=self.persona_id, error=str(e))
         finally:
-            self._page = self._context = None
+            self._page = self._context = self._browser = None
+            if self._playwright:
+                try:
+                    self._playwright.stop()
+                except Exception:
+                    pass
+                self._playwright = None
             _shared_browser.release()
         logger.debug("browser.closed", persona_id=self.persona_id)
 
@@ -314,6 +357,18 @@ class PlaywrightEngine:
 
     def __exit__(self, *_):
         self.close()
+
+    @property
+    def _pending_alert(self) -> Optional[str]:
+        if not self._page or self._page.is_closed():
+            return None
+        try:
+            alerts = self._page.evaluate("() => { const a = window.__pw_alerts || []; window.__pw_alerts = []; return a; }")
+            if alerts:
+                return " | ".join(alerts)
+        except Exception:
+            pass
+        return None
 
     # ------------------------------------------------------------------
     # Perceive
@@ -504,7 +559,6 @@ class PlaywrightEngine:
         assert self._page, "Call open() first."
         start        = time.time()
         element_html = self._get_element_html(target_selector) if target_selector else None
-        self._pending_alert = None
 
         try:
             if   action_type == "click":            r = self._do_click(target_selector)
@@ -619,9 +673,3 @@ class PlaywrightEngine:
             ).decode("utf-8")
         except Exception:
             return None
-
-    def _handle_dialog(self, dialog) -> None:
-        self._pending_alert = dialog.message
-        logger.debug("browser.dialog", persona_id=self.persona_id,
-                     type=dialog.type, message=dialog.message[:100])
-        dialog.dismiss()

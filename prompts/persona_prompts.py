@@ -1,20 +1,5 @@
 # prompts/persona_prompts.py
-"""
-Prompts for the Persona Agent's Perceive → Decide → Act loop.
 
-Changes in this version:
-  - DECISION_USER now receives a {working_memory} block — a compact structured
-    summary of task progress maintained by Python (not the LLM). This replaces
-    scattered action_history + filled_fields with a single authoritative object
-    the model can read and act on reliably.
-  - DECISION_SYSTEM has an explicit WORKING MEMORY section explaining each field.
-  - observe_count is surfaced so the model knows it is burning steps doing nothing.
-  - page_phase is the key addition: it tells the model which stage of the task
-    it is in (filling_form | submitted | awaiting_redirect | success | stuck),
-    preventing post-submit observe spirals entirely.
-  - COMPLETION_CHECK_USER receives {last_action_summary} (already used in agent).
-  - ISSUE_DETECTION_USER receives {already_reported} to prevent duplicate issues.
-"""
 
 # ---------------------------------------------------------------------------
 # 0. Page Understanding — called ONCE before the decision loop

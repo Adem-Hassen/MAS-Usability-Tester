@@ -446,7 +446,7 @@ export default function DashboardPage() {
                style={{ background: 'var(--amber)', color: '#0f0f0d' }}>
             N
           </div>
-          <span className="font-display font-bold text-base tracking-tight">MAS Usability Tester</span>
+          <span className="font-display font-bold text-base tracking-tight">ViriSimUX</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded font-mono hidden sm:inline"
                 style={{ background: 'var(--surface)', color: 'var(--text3)' }}>
             Accessibility Evaluator

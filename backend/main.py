@@ -14,12 +14,9 @@ Endpoints:
 
 from __future__ import annotations
 
-import sys
-if sys.platform == "win32":
-    import asyncio
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
+import asyncio
 import json
+import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -105,21 +102,33 @@ async def stream_session(session_id: str):
     _get_session(session_id)  # validate exists
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        # Send buffered events first (for reconnect support)
-        for ev in store.get_events(session_id):
-           yield _sse(ev)
+        # Subscribe FIRST to avoid race between replay and new events
+        q: asyncio.Queue = asyncio.Queue()
+        store._queues.setdefault(session_id, []).append(q)
 
-    # Heartbeat task — sends a comment every 15s to keep connection alive
-        async def with_heartbeat():
-          async for ev in store.subscribe(session_id):
-             yield ev
+        try:
+            # Replay buffered events (for reconnect support)
+            for ev in store.get_events(session_id):
+                yield _sse(ev)
+                if ev.get("kind") in (EventKind.DONE, EventKind.ERROR):
+                    return
 
-        async for ev in with_heartbeat():
-          yield _sse(ev)
-          if ev.get("kind") in (EventKind.DONE, EventKind.ERROR):
-            break
-        # Yield a SSE comment as keepalive (browsers ignore comment lines)
-          yield ": keepalive\n\n"
+            # Listen for live events with periodic keepalive
+            while True:
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=15)
+                    yield _sse(event)
+                    if event.get("kind") in (EventKind.DONE, EventKind.ERROR):
+                        break
+                except asyncio.TimeoutError:
+                    # Send SSE comment as keepalive — browsers ignore these
+                    # but they prevent the connection from being dropped
+                    yield ": keepalive\n\n"
+        finally:
+            try:
+                store._queues[session_id].remove(q)
+            except (KeyError, ValueError):
+                pass
 
     return StreamingResponse(
         event_generator(),
@@ -127,6 +136,7 @@ async def stream_session(session_id: str):
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         },
     )
 

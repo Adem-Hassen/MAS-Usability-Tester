@@ -103,6 +103,8 @@ def _run_pipeline_sync(session: Session, store: SessionStore) -> None:
 # ---------------------------------------------------------------------------
 
 def _run_real_pipeline(session, store, emit, total_pages, all_results):
+    import logging as _logging
+
     pages = [
         {
             "html_path":  str(p.resolve()),
@@ -111,60 +113,183 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
         for p in session.input_paths
     ]
 
-    for idx, page in enumerate(pages):
-        stem      = Path(page["html_path"]).stem
-        page_num  = idx + 1
-        base_prog = int((idx / total_pages) * 90)
+    emit(EventKind.STEP, step="supervisor", status="running",
+         pages_total=total_pages,
+         label=f"Running evaluation on {total_pages} page(s)")
+    emit(EventKind.PROGRESS, value=5,
+         label=f"Supervisor analysing {total_pages} page(s)")
 
-        emit(EventKind.STEP, step="supervisor", status="running",
-             page=stem, page_num=page_num, pages_total=total_pages,
-             label=f"[{page_num}/{total_pages}] Analysing {stem}")
-        emit(EventKind.PROGRESS, value=base_prog + 5,
-             label=f"Supervisor analysing {stem}")
+    # ── Bridge structlog → SSE: translate pipeline phases to frontend steps ──
+    # Instead of suppressing all logging, install a custom handler that:
+    #   1. Catches pipeline structlog messages and maps them to SSE step events
+    #   2. Suppresses stdout output (no terminal flooding on Windows)
+    #   3. Sends periodic progress updates so the frontend stays alive
+    import logging as _logging
+    import threading
 
-        try:
-            state = run_evaluation(
-                pages=pages
-            )
-        except Exception as e:
-            emit(EventKind.LOG, level="error",
-                 message=f"Pipeline failed for {stem}: {e}")
+    # Map structlog event names → frontend step IDs + progress values
+    _STEP_MAP = {
+        "graph.supervisor_node.start":  ("supervisor",   "running", 5,  "Analysing UI…"),
+        "graph.supervisor_node.done":   ("supervisor",   "done",    12, "UI analysis complete"),
+        "supervisor.start":             ("supervisor",   "running", 5,  "Analysing UI structure…"),
+        "fan_out_pages.sending":        ("supervisor",   "done",    15, "Starting page evaluations…"),
+        "page_pipeline.start":          ("personas",     "running", 18, "Running persona simulations…"),
+        "page_pipeline.persona_done":   ("personas",     "running", 25, "Persona simulation in progress…"),
+        "page_pipeline.no_issues":      ("report",       "running", 60, "No issues found — generating report…"),
+        "page_pipeline.verification_passed":   ("verification", "done", 55, "Verification passed"),
+        "page_pipeline.verification_failed":   ("verification", "done", 50, "Verification — needs correction"),
+        "page_pipeline.done":           ("report",       "done",    65, "Page evaluation complete"),
+        "correction_loop.prepared":     ("verification", "running", 50, "Running correction loop…"),
+    }
+    # Map internal function names to step IDs (from the _run_* calls in graph.py)
+    _FUNC_STEP_MAP = {
+        "analysis_node":        ("personas",     "done",    28, "Trace analysis complete"),
+        "clustering_node":      ("clustering",   "running", 30, "Clustering issues…"),
+        "cluster_engine":       ("clustering",   "done",    35, "Issue clustering complete"),
+        "recommender_node":     ("recommender",  "running", 38, "Generating patches…"),
+        "recommender":          ("recommender",  "running", 38, "Generating patch proposals…"),
+        "conflict_resolver":    ("resolver",     "running", 45, "Resolving conflicts…"),
+        "patch_applicator":     ("applicator",   "running", 50, "Applying patches…"),
+        "verification_node":    ("verification", "running", 55, "Verifying fixes…"),
+        "report_generator":     ("report",       "running", 60, "Generating report…"),
+    }
+
+    import io
+    import sys
+    import contextlib
+
+    class _SSEBridgeStream(io.TextIOBase):
+        """Intercept structlog output from sys.stdout and translate to SSE events."""
+        def __init__(self, emit_fn, total_pages):
+            super().__init__()
+            self._emit = emit_fn
+            self._total = total_pages
+            self._last_step = None
+
+        def write(self, msg: str) -> int:
+            # Check direct event name matches
+            for event_prefix, (step_id, status, prog, label) in _STEP_MAP.items():
+                if event_prefix in msg:
+                    self._emit_step(step_id, status, prog, label)
+                    return len(msg)
+
+            # Check function/module name matches
+            for func_key, (step_id, status, prog, label) in _FUNC_STEP_MAP.items():
+                if func_key in msg:
+                    if step_id != self._last_step:
+                        self._emit_step(step_id, status, prog, label)
+                    return len(msg)
+
+            return len(msg)
+
+        def flush(self) -> None:
+            pass
+
+        def _emit_step(self, step_id, status, prog, label):
+            self._last_step = step_id
+            self._emit(EventKind.STEP, step=step_id, status=status,
+                       pages_total=self._total, label=label)
+            self._emit(EventKind.PROGRESS, value=prog, label=label)
+
+    _bridge_stream = _SSEBridgeStream(emit, total_pages)
+
+    # Heartbeat thread: send keepalive progress in case no log events arrive
+    _pipeline_done = threading.Event()
+
+    def _heartbeat():
+        while not _pipeline_done.wait(timeout=20):
+            # Omit value entirely so frontend doesn't coalesce nullish to 0
+            emit(EventKind.PROGRESS, label="Pipeline running…")
+
+    heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
+    heartbeat_thread.start()
+
+    try:
+        # Redirect sys.stdout to our bridge stream. This suppresses output
+        # to the terminal and allows us to parse structlog json logs.
+        with contextlib.redirect_stdout(_bridge_stream):
+            state = run_evaluation(pages=pages)
+    except Exception as e:
+        _pipeline_done.set()
+        emit(EventKind.LOG, level="error",
+             message=f"Pipeline failed: {e}")
+        for p in pages:
+            stem = Path(p["html_path"]).stem
             all_results.append({"page": stem, "error": str(e)})
+        return
+    finally:
+        _pipeline_done.set()
+        heartbeat_thread.join(timeout=2)
+
+    emit(EventKind.STEP, step="supervisor", status="done",
+         pages_total=total_pages,
+         label="Pipeline execution complete")
+    emit(EventKind.PROGRESS, value=70, label="Processing results")
+
+    # ── Extract results from pipeline state ──
+    # state["page_contexts"] is list[PageContext], state["reports"] is list[DiagnosticReport]
+    page_contexts = state.get("page_contexts", [])
+    reports       = state.get("reports", [])
+
+    # Build a lookup from source path stem to PageContext and Report
+    ctx_by_stem = {}
+    for ctx in page_contexts:
+        stem = Path(ctx.html_source_path).stem
+        # Correction loop creates temp file names — map back to original
+        # by matching against the input pages list
+        for p in pages:
+            if Path(p["html_path"]).stem in stem:
+                stem = Path(p["html_path"]).stem
+                break
+        ctx_by_stem[stem] = ctx
+
+    report_by_stem = {}
+    for rpt in reports:
+        if rpt is None:
             continue
+        stem = Path(rpt.html_source_path).stem
+        for p in pages:
+            if Path(p["html_path"]).stem in stem:
+                stem = Path(p["html_path"]).stem
+                break
+        report_by_stem[stem] = rpt
 
-        report = state.get("report")
+    for idx, page in enumerate(pages):
+        stem     = Path(page["html_path"]).stem
+        page_num = idx + 1
+        ctx      = ctx_by_stem.get(stem)
+        report   = report_by_stem.get(stem)
 
-        # Emit issues
-        for cluster in state.get("issue_clusters", []):
-            for issue in cluster.get("issues", []) if isinstance(cluster, dict) \
-                    else getattr(cluster, "issues", []):
-                issue_d = issue if isinstance(issue, dict) else issue.model_dump()
-                emit(EventKind.ISSUE,
-                     page=stem,
-                     issue_id=issue_d.get("issue_id"),
-                     title=issue_d.get("title"),
-                     severity=str(issue_d.get("severity", "medium")),
-                     category=str(issue_d.get("category", "usability")),
-                     description=issue_d.get("description", ""))
+        # Emit issues from page context
+        if ctx:
+            for cluster in (ctx.issue_clusters or []):
+                for issue in getattr(cluster, "issues", []):
+                    issue_d = issue.model_dump() if hasattr(issue, "model_dump") else issue
+                    emit(EventKind.ISSUE,
+                         page=stem,
+                         issue_id=issue_d.get("issue_id"),
+                         title=issue_d.get("title"),
+                         severity=str(issue_d.get("severity", "medium")),
+                         category=str(issue_d.get("category", "usability")),
+                         description=issue_d.get("description", ""))
 
-        # Emit patches
-        ups = state.get("unified_patch_set")
-        patches = ups.patches if ups and hasattr(ups, "patches") else \
-                  ups.get("patches", []) if isinstance(ups, dict) else []
-        for patch in patches:
-            patch_d = patch if isinstance(patch, dict) else patch.model_dump()
-            emit(EventKind.PATCH,
-                 page=stem,
-                 patch_id=patch_d.get("resolved_patch_id"),
-                 target=patch_d.get("target_element"),
-                 description=patch_d.get("description", ""),
-                 patch_type=patch_d.get("patch_type", "html_attribute"))
+            # Emit patches
+            ups = ctx.unified_patch_set
+            if ups and hasattr(ups, "patches"):
+                for patch in ups.patches:
+                    patch_d = patch.model_dump() if hasattr(patch, "model_dump") else patch
+                    emit(EventKind.PATCH,
+                         page=stem,
+                         patch_id=patch_d.get("resolved_patch_id"),
+                         target=patch_d.get("target_element"),
+                         description=patch_d.get("description", ""),
+                         patch_type=patch_d.get("patch_type", "html_attribute"))
 
-        # Save patched HTML
-        patched = state.get("patched_html_content") or state.get("html_content", "")
-        out_file = session.output_dir / f"{stem}_fixed.html"
-        if patched:
-            out_file.write_text(patched, encoding="utf-8")
+            # Save patched HTML
+            patched = ctx.patched_html_content or ctx.html_content
+            out_file = session.output_dir / f"{stem}_fixed.html"
+            if patched:
+                out_file.write_text(patched, encoding="utf-8")
 
         # Save report JSON
         if report:
@@ -175,13 +300,13 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
 
             all_results.append({
                 "page":            stem,
-                "fixed_file":      out_file.name if patched else None,
+                "fixed_file":      f"{stem}_fixed.html" if ctx and (ctx.patched_html_content or ctx.html_content) else None,
                 "report_file":     f"{stem}_report.json",
-                "overall_score":   getattr(report, "overall_score", rpt_d.get("overall_score")),
-                "total_issues":    getattr(report, "total_issues_found", rpt_d.get("total_issues_found", 0)),
-                "patches_applied": getattr(report, "total_patches_applied", rpt_d.get("total_patches_applied", 0)),
-                "summary":         getattr(report, "executive_summary", rpt_d.get("executive_summary", "")),
-                "recommendations": getattr(report, "top_recommendations", rpt_d.get("top_recommendations", [])),
+                "overall_score":   report.overall_score,
+                "total_issues":    report.total_issues_found,
+                "patches_applied": report.total_patches_applied,
+                "summary":         report.executive_summary,
+                "recommendations": report.top_recommendations,
             })
         else:
             all_results.append({"page": stem, "error": "No report generated"})

@@ -32,26 +32,7 @@ logger = get_logger(__name__)
 # =============================================================================
 
 def supervisor_node(state: dict) -> dict:
-    """
-    LangGraph node.
-
-    Reads all HTML files, runs batch UIAnalysis + per-page persona generation,
-    returns a list of initialised PageContext objects (one per page) via the
-    page_contexts operator.add accumulator.
-
-    State reads:
-        pages_input              list[{"html_path": str, "ui_context": str}]
-        used_persona_names       list[str]
-        used_persona_goals       list[str]
-        used_persona_constraints list[str]
-
-    State writes:
-        page_contexts            list[PageContext]  — one per HTML page
-        used_persona_names       updated accumulator
-        used_persona_goals       updated accumulator
-        used_persona_constraints updated accumulator
-        pipeline_error           str | None
-    """
+  
     pages_input: list[dict] = state.get("pages_input", [])
     logger.info("supervisor.start", total_pages=len(pages_input))
 
