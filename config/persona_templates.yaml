@@ -1,4 +1,4 @@
-# config/persona_library.yaml
+# config/persona_templates.yaml
 #
 # Pre-built persona templates for common UI types.
 # Used when use_persona_library: true in settings.
@@ -10,7 +10,9 @@
 #   personas:
 #     - id: unique identifier
 #       ui_types: list of ui_type values this persona is relevant for ("*" = all)
-#       profile: PersonaProfile fields (task_goal and success_criteria are set by Supervisor)
+#       name: string
+#       age_range: string
+#       ... (other PersonaProfile fields, omitting empty arrays and defaults)
 
 personas:
 
@@ -20,81 +22,66 @@ personas:
 
   - id: lib_elderly_screen_reader
     ui_types: ["*"]
-    profile:
-      name: "Elderly screen reader user"
-      age_range: "65-80"
-      technical_skill: "low"
-      accessibility_constraints:
-        - "uses screen reader (NVDA or VoiceOver)"
-        - "keyboard-only navigation — no mouse"
-        - "requires descriptive link and button text"
-      cognitive_limitations:
-        - "unfamiliar with modern web conventions"
-        - "reads page content sequentially via screen reader"
-        - "confused by dynamic content changes without announcements"
-      risk_tolerance: "low"
-      latency_tolerance: "low"
-      interaction_style: "methodical"
+    name: "Elderly screen reader user"
+    age_range: "65-80"
+    technical_skill: "low"
+    accessibility_constraints:
+      - "uses screen reader (NVDA or VoiceOver)"
+      - "keyboard-only navigation — no mouse"
+      - "requires descriptive link and button text"
+    cognitive_limitations:
+      - "unfamiliar with modern web conventions"
+      - "reads page content sequentially via screen reader"
+      - "confused by dynamic content changes without announcements"
+    risk_tolerance: "low"
+    latency_tolerance: "low"
 
   - id: lib_keyboard_only_power_user
     ui_types: ["*"]
-    profile:
-      name: "Keyboard-only power user"
-      age_range: "30-45"
-      technical_skill: "high"
-      accessibility_constraints:
-        - "keyboard-only navigation — motor impairment prevents mouse use"
-        - "relies on visible focus indicators"
-        - "uses Tab, Shift+Tab, Enter, Space, arrow keys"
-      cognitive_limitations: []
-      risk_tolerance: "medium"
-      latency_tolerance: "medium"
-      interaction_style: "methodical"
+    name: "Keyboard-only power user"
+    age_range: "30-45"
+    technical_skill: "high"
+    accessibility_constraints:
+      - "keyboard-only navigation — motor impairment prevents mouse use"
+      - "relies on visible focus indicators"
+      - "uses Tab, Shift+Tab, Enter, Space, arrow keys"
 
   - id: lib_colorblind_user
     ui_types: ["*"]
-    profile:
-      name: "Colorblind user (deuteranopia)"
-      age_range: "25-40"
-      technical_skill: "medium"
-      accessibility_constraints:
-        - "red-green colorblindness (deuteranopia)"
-        - "cannot distinguish red error messages from normal text without icons or labels"
-        - "relies on shapes, patterns, and text — not color alone"
-      cognitive_limitations: []
-      risk_tolerance: "medium"
-      latency_tolerance: "medium"
-      interaction_style: "exploratory"
+    name: "Colorblind user (deuteranopia)"
+    age_range: "25-40"
+    technical_skill: "medium"
+    accessibility_constraints:
+      - "red-green colorblindness (deuteranopia)"
+      - "cannot distinguish red error messages from normal text without icons or labels"
+      - "relies on shapes, patterns, and text — not color alone"
+    interaction_style: "exploratory"
 
   - id: lib_non_native_speaker
     ui_types: ["*"]
-    profile:
-      name: "Non-native language speaker"
-      age_range: "28-50"
-      technical_skill: "medium"
-      accessibility_constraints: []
-      cognitive_limitations:
-        - "reads slowly — skips long paragraphs"
-        - "confused by idiomatic or ambiguous button labels"
-        - "relies heavily on icons and visual affordances"
-      risk_tolerance: "low"
-      latency_tolerance: "medium"
-      interaction_style: "cautious"
+    name: "Non-native language speaker"
+    age_range: "28-50"
+    technical_skill: "medium"
+    cognitive_limitations:
+      - "reads slowly — skips long paragraphs"
+      - "confused by idiomatic or ambiguous button labels"
+      - "relies heavily on icons and visual affordances"
+    risk_tolerance: "low"
+    interaction_style: "cautious"
 
   - id: lib_mobile_user_slow_connection
     ui_types: ["*"]
-    profile:
-      name: "Mobile user on slow connection"
-      age_range: "18-35"
-      technical_skill: "medium"
-      accessibility_constraints:
-        - "using mobile device — touch targets must be large enough"
-        - "small screen — horizontal scrolling is a failure"
-      cognitive_limitations:
-        - "distracted — multitasking while using the UI"
-      risk_tolerance: "low"
-      latency_tolerance: "low"
-      interaction_style: "impatient"
+    name: "Mobile user on slow connection"
+    age_range: "18-35"
+    technical_skill: "medium"
+    accessibility_constraints:
+      - "using mobile device — touch targets must be large enough"
+      - "small screen — horizontal scrolling is a failure"
+    cognitive_limitations:
+      - "distracted — multitasking while using the UI"
+    risk_tolerance: "low"
+    latency_tolerance: "low"
+    interaction_style: "impatient"
 
   # ---------------------------------------------------------------------------
   # Form-specific personas
@@ -102,33 +89,28 @@ personas:
 
   - id: lib_first_time_form_user
     ui_types: ["login form", "registration form", "checkout form", "contact form", "form"]
-    profile:
-      name: "First-time user — unfamiliar with this form"
-      age_range: "40-60"
-      technical_skill: "low"
-      accessibility_constraints: []
-      cognitive_limitations:
-        - "has never used this type of form before"
-        - "does not know what format is expected for inputs"
-        - "reads error messages carefully but may not understand jargon"
-      risk_tolerance: "low"
-      latency_tolerance: "medium"
-      interaction_style: "cautious"
+    name: "First-time user — unfamiliar with this form"
+    age_range: "40-60"
+    technical_skill: "low"
+    cognitive_limitations:
+      - "has never used this type of form before"
+      - "does not know what format is expected for inputs"
+      - "reads error messages carefully but may not understand jargon"
+    risk_tolerance: "low"
+    interaction_style: "cautious"
 
   - id: lib_impatient_form_user
     ui_types: ["login form", "registration form", "checkout form", "contact form", "form"]
-    profile:
-      name: "Impatient returning user"
-      age_range: "25-35"
-      technical_skill: "high"
-      accessibility_constraints: []
-      cognitive_limitations:
-        - "does not read instructions — fills fields quickly"
-        - "makes typos under time pressure"
-        - "abandons the form if blocked for more than 10 seconds"
-      risk_tolerance: "high"
-      latency_tolerance: "low"
-      interaction_style: "impatient"
+    name: "Impatient returning user"
+    age_range: "25-35"
+    technical_skill: "high"
+    cognitive_limitations:
+      - "does not read instructions — fills fields quickly"
+      - "makes typos under time pressure"
+      - "abandons the form if blocked for more than 10 seconds"
+    risk_tolerance: "high"
+    latency_tolerance: "low"
+    interaction_style: "impatient"
 
   # ---------------------------------------------------------------------------
   # Dashboard / data UI personas
@@ -136,30 +118,24 @@ personas:
 
   - id: lib_non_technical_dashboard_user
     ui_types: ["dashboard", "admin panel", "analytics", "reporting"]
-    profile:
-      name: "Non-technical manager reading a dashboard"
-      age_range: "45-60"
-      technical_skill: "low"
-      accessibility_constraints: []
-      cognitive_limitations:
-        - "does not understand technical terminology"
-        - "overwhelmed by too many charts or options"
-        - "relies on clear labels and summaries"
-      risk_tolerance: "low"
-      latency_tolerance: "low"
-      interaction_style: "cautious"
+    name: "Non-technical manager reading a dashboard"
+    age_range: "45-60"
+    technical_skill: "low"
+    cognitive_limitations:
+      - "does not understand technical terminology"
+      - "overwhelmed by too many charts or options"
+      - "relies on clear labels and summaries"
+    risk_tolerance: "low"
+    latency_tolerance: "low"
+    interaction_style: "cautious"
 
   - id: lib_data_analyst
     ui_types: ["dashboard", "admin panel", "analytics", "reporting"]
-    profile:
-      name: "Data analyst — power user"
-      age_range: "28-40"
-      technical_skill: "high"
-      accessibility_constraints: []
-      cognitive_limitations: []
-      risk_tolerance: "high"
-      latency_tolerance: "medium"
-      interaction_style: "exploratory"
+    name: "Data analyst — power user"
+    age_range: "28-40"
+    technical_skill: "high"
+    risk_tolerance: "high"
+    interaction_style: "exploratory"
 
   # ---------------------------------------------------------------------------
   # E-commerce personas
@@ -167,32 +143,28 @@ personas:
 
   - id: lib_anxious_shopper
     ui_types: ["e-commerce", "product page", "checkout", "shopping cart"]
-    profile:
-      name: "Anxious first-time online shopper"
-      age_range: "55-70"
-      technical_skill: "low"
-      accessibility_constraints: []
-      cognitive_limitations:
-        - "worried about payment security"
-        - "reads every label and confirmation carefully"
-        - "easily confused by multi-step checkout"
-      risk_tolerance: "low"
-      latency_tolerance: "low"
-      interaction_style: "cautious"
+    name: "Anxious first-time online shopper"
+    age_range: "55-70"
+    technical_skill: "low"
+    cognitive_limitations:
+      - "worried about payment security"
+      - "reads every label and confirmation carefully"
+      - "easily confused by multi-step checkout"
+    risk_tolerance: "low"
+    latency_tolerance: "low"
+    interaction_style: "cautious"
 
   - id: lib_deal_hunter
     ui_types: ["e-commerce", "product page", "checkout", "shopping cart"]
-    profile:
-      name: "Deal-hunting frequent online shopper"
-      age_range: "25-40"
-      technical_skill: "high"
-      accessibility_constraints: []
-      cognitive_limitations:
-        - "focused only on price and checkout speed"
-        - "ignores marketing copy entirely"
-      risk_tolerance: "high"
-      latency_tolerance: "low"
-      interaction_style: "impatient"
+    name: "Deal-hunting frequent online shopper"
+    age_range: "25-40"
+    technical_skill: "high"
+    cognitive_limitations:
+      - "focused only on price and checkout speed"
+      - "ignores marketing copy entirely"
+    risk_tolerance: "high"
+    latency_tolerance: "low"
+    interaction_style: "impatient"
 
   # ---------------------------------------------------------------------------
   # Landing page / marketing personas
@@ -200,15 +172,13 @@ personas:
 
   - id: lib_skeptical_visitor
     ui_types: ["landing page", "marketing page", "homepage"]
-    profile:
-      name: "Skeptical first-time visitor"
-      age_range: "30-50"
-      technical_skill: "medium"
-      accessibility_constraints: []
-      cognitive_limitations:
-        - "does not trust the site yet — reads critically"
-        - "looking for trust signals: reviews, contact info, security badges"
-        - "will leave immediately if CTA is unclear"
-      risk_tolerance: "low"
-      latency_tolerance: "low"
-      interaction_style: "cautious"
+    name: "Skeptical first-time visitor"
+    age_range: "30-50"
+    technical_skill: "medium"
+    cognitive_limitations:
+      - "does not trust the site yet — reads critically"
+      - "looking for trust signals: reviews, contact info, security badges"
+      - "will leave immediately if CTA is unclear"
+    risk_tolerance: "low"
+    latency_tolerance: "low"
+    interaction_style: "cautious"

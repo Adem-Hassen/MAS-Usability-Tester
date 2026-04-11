@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import concurrent.futures
 from pathlib import Path
 from typing import Optional
 
@@ -72,39 +73,50 @@ def supervisor_node(state: dict) -> dict:
             loaded=len(loaded),
         )
 
-    # ── 2. Batch UIAnalysis — one LLM call for all pages ─────────────────
-    analyses, error = _batch_analyze_ui(loaded)
-    if error:
-        return {"pipeline_error": f"Batch UI analysis failed: {error}"}
-
-    # ── 3. Per-page persona generation ───────────────────────────────────
+    # ── 2 & 3. Parallel UI Analysis and Persona Generation ───────────────
     used_names:       list[str] = list(state.get("used_persona_names",       []))
     used_goals:       list[str] = list(state.get("used_persona_goals",       []))
     used_constraints: list[str] = list(state.get("used_persona_constraints", []))
 
     page_contexts: list[PageContext] = []
 
-    for page, analysis in zip(loaded, analyses):
+    def process_page(page: dict) -> PageContext | str:
         html_path    = page["html_path"]
         html_content = page["html_content"]
         ui_context   = page["ui_context"]
 
-        # Persona budget: proportional to page complexity
+        # 1. UI Analysis
+        user_prompt = UI_ANALYSIS_USER.format(
+            ui_context=ui_context,
+            html_content=preprocess_for_analysis(html_content, 10_000),
+        )
+        raw_analysis, analysis_error = _call_supervisor_llm(
+            system_prompt=UI_ANALYSIS_SYSTEM,
+            user_prompt=user_prompt,
+            task="ui_analysis",
+        )
+        if analysis_error:
+            analysis = _stub_analysis(ui_context)
+        else:
+            try:
+                analysis = UIAnalysis(**json.loads(raw_analysis))
+            except Exception:
+                analysis = _stub_analysis(ui_context)
+
+        # 2. Persona Budget
         max_personas = _persona_budget(analysis)
 
-        personas, error = _generate_personas(
+        # 3. Persona Generation
+        personas, persona_error = _generate_personas(
             ui_analysis=analysis,
             ui_context=ui_context,
             max_personas=max_personas,
-            used_names=used_names,
-            used_goals=used_goals,
-            used_constraints=used_constraints,
+            used_names=[], # Cross-page diversity relaxed for parallel perf
+            used_goals=[],
+            used_constraints=[],
         )
-        if error:
-            logger.error(
-                "supervisor.persona_generation_failed",
-                path=html_path, error=error,
-            )
+        if persona_error:
+            logger.error("supervisor.persona_generation_failed", path=html_path, error=persona_error)
             personas = []
 
         logger.info(
@@ -124,15 +136,9 @@ def supervisor_node(state: dict) -> dict:
                 constraints=p.accessibility_constraints,
             )
 
-        # Detect localStorage / sessionStorage seeds
         storage_seed = _detect_storage_requirements(html_content)
 
-        # Accumulate diversity so next page gets different archetypes
-        used_names       += [p.name for p in personas]
-        used_goals       += [p.task_goal for p in personas]
-        used_constraints += [c for p in personas for c in p.accessibility_constraints]
-
-        ctx = PageContext(
+        return PageContext(
             html_source_path=html_path,
             html_content=html_content,
             ui_context=ui_context,
@@ -140,7 +146,20 @@ def supervisor_node(state: dict) -> dict:
             ui_analysis=analysis,
             personas=personas,
         )
-        page_contexts.append(ctx)
+
+    # Execute in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(loaded))) as executor:
+        results = list(executor.map(process_page, loaded))
+
+    for res in results:
+        if isinstance(res, str):
+            logger.error("supervisor.process_page_error", error=res)
+            continue
+        page_contexts.append(res)
+        # Update used lists locally
+        used_names       += [p.name for p in res.personas]
+        used_goals       += [p.task_goal for p in res.personas]
+        used_constraints += [c for p in res.personas for c in p.accessibility_constraints]
 
     logger.info(
         "supervisor.complete",
@@ -253,164 +272,7 @@ def recommender_profile_node(state: dict) -> dict:
     return {"recommender_profiles": profiles}
 
 
-# =============================================================================
-# Batch UI analysis  (all pages in one LLM call)
-# =============================================================================
 
-_BATCH_ANALYSIS_SYSTEM = """\
-You are a senior UX engineer and accessibility specialist.
-You will analyze MULTIPLE HTML pages from the same web application.
-Analyzing them together lets you understand the overall user journey
-(e.g. login -> dashboard -> checkout) and identify cross-page patterns.
-
-For EACH page, output a UIAnalysis JSON object. Return a JSON array — one
-object per page, in the SAME ORDER as the input pages.
-
-Each UIAnalysis must match this exact schema:
-{
-  "ui_purpose": "string",
-  "ui_type": "login form | dashboard | checkout | registration | landing | other",
-  "accessibility_risk_level": "low | medium | high",
-  "detected_issues_hint": ["string", ...],
-  "critical_paths": [
-    {
-      "path_id": "string",
-      "name": "string",
-      "steps": ["step 1", ...],
-      "accessibility_sensitive": true,
-      "entry_selector": "CSS selector or null"
-    }
-  ],
-  "interactive_elements": [
-    {
-      "tag": "string",
-      "selector": "CSS selector",
-      "label": "string or null",
-      "input_type": "string or null",
-      "is_accessible": true,
-      "notes": "string or null"
-    }
-  ]
-}
-
-Output ONLY a valid JSON array — no explanation, no markdown.
-"""
-
-_BATCH_ANALYSIS_USER = """\
-Application context: {app_context}
-
-You are analysing {n_pages} page(s) from the same application.
-
-{pages_block}
-
-Analyse each page. Output ONLY the JSON array (one UIAnalysis per page, same order).
-"""
-
-
-def _batch_analyze_ui(
-    loaded: list[dict],
-) -> tuple[list[UIAnalysis], str | None]:
-    """
-    Single LLM call that analyses ALL pages together.
-    Returns list[UIAnalysis] in same order as loaded[].
-
-    Token budget: each page gets at most _per_page_chars() characters so that
-    N pages never exceed ~20 K tokens in the batch prompt.  Groq's context
-    window is 128 K but the JSON response size also matters — staying under
-    20 K input tokens avoids the empty-choices response.
-    """
-    n = len(loaded)
-
-    # Dynamic per-page char budget: total cap / number of pages, min 1500
-    TOTAL_CHAR_BUDGET = 15_000
-    per_page_chars    = max(1500, TOTAL_CHAR_BUDGET // n)
-
-    # Build the pages block: one section per page
-    pages_block_parts = []
-    for i, page in enumerate(loaded, 1):
-        html = preprocess_for_analysis(page["html_content"], per_page_chars)
-#
-        pages_block_parts.append(
-            f"=== PAGE {i} ===\n"
-            f"File: {Path(page['html_path']).name}\n"
-            f"Context: {page['ui_context']}\n\n"
-            f"{html}"
-        )
-
-    # Derive a short app context from all ui_context strings
-    all_contexts = [p["ui_context"] for p in loaded]
-    app_context  = " / ".join(all_contexts) if len(all_contexts) > 1 else all_contexts[0]
-
-    user_prompt = _BATCH_ANALYSIS_USER.format(
-        app_context=app_context,
-        n_pages=n,
-        pages_block="\n\n".join(pages_block_parts),
-    )
-
-    logger.info("supervisor.batch_analysis_prompt_size",
-                pages=n,
-                per_page_chars=per_page_chars,
-                total_chars=len(user_prompt))
-
-    raw, error = _call_supervisor_llm(
-        system_prompt=_BATCH_ANALYSIS_SYSTEM,
-        user_prompt=user_prompt,
-        task="batch_ui_analysis",
-        force_array=True,
-    )
-    if error:
-        return [], error
-
-    try:
-        data = json.loads(raw)
-        # Unwrap {"pages": [...]} container
-        if isinstance(data, dict):
-            data = next(iter(data.values()))
-        if not isinstance(data, list):
-            raise ValueError(f"Expected array, got {type(data)}")
-
-        analyses = []
-        for item in data:
-            analyses.append(UIAnalysis(**item))
-
-        # If LLM returned fewer items than pages, pad with stubs
-        while len(analyses) < n:
-            analyses.append(_stub_analysis(loaded[len(analyses)]["ui_context"]))
-
-        return analyses[:n], None
-
-    except Exception as e:
-        logger.error("supervisor.batch_analysis_parse_error",
-                     error=str(e), raw=raw[:500])
-        # Fallback: analyse each page individually
-        return _fallback_individual_analysis(loaded)
-
-
-
-
-def _fallback_individual_analysis(
-    loaded: list[dict],
-) -> tuple[list[UIAnalysis], str | None]:
-    """Per-page fallback when batch call fails."""
-    analyses = []
-    for page in loaded:
-        user = UI_ANALYSIS_USER.format(
-            ui_context=page["ui_context"],
-            html_content=preprocess_for_analysis(page["html_content"], 10_000),
-        )
-        raw, error = _call_supervisor_llm(
-            system_prompt=UI_ANALYSIS_SYSTEM,
-            user_prompt=user,
-            task="ui_analysis_fallback",
-        )
-        if error:
-            analyses.append(_stub_analysis(page["ui_context"]))
-            continue
-        try:
-            analyses.append(UIAnalysis(**json.loads(raw)))
-        except Exception:
-            analyses.append(_stub_analysis(page["ui_context"]))
-    return analyses, None
 
 
 def _stub_analysis(ui_context: str) -> UIAnalysis:
@@ -476,6 +338,33 @@ def _generate_personas(
     used_constraints: list[str],
 ) -> tuple[list[PersonaProfile] | None, str | None]:
 
+    import yaml
+    
+    # Load predefined library
+    library_path = Path("config/persona_templates.yaml").resolve()
+    if not library_path.exists():
+        return None, "config/persona_templates.yaml not found"
+        
+    try:
+        persona_library_raw = library_path.read_text(encoding="utf-8")
+        persona_library = yaml.safe_load(persona_library_raw).get("personas", [])
+    except Exception as e:
+        return None, f"Failed to load persona library: {e}"
+
+    # Filter personas by UI Type relevance and minify for the prompt
+    current_ui_type = str(ui_analysis.ui_type).lower()
+    relevant_personas = []
+    prompt_library = []
+    for p in persona_library:
+        ui_types = [t.lower() for t in p.get("ui_types", [])]
+        if "*" in ui_types or current_ui_type in ui_types or current_ui_type == "other":
+            relevant_personas.append(p)
+            prompt_library.append({
+                "base_id": p["id"],
+                "name": p["name"],
+                "constraints": p.get("accessibility_constraints", []) + p.get("cognitive_limitations", [])
+            })
+
     diversity_block = ""
     if used_names or used_goals or used_constraints:
         parts = []
@@ -486,19 +375,14 @@ def _generate_personas(
                 "Task goals already covered:\n"
                 + "\n".join(f"  - {g}" for g in used_goals[:10])
             )
-        if used_constraints:
-            unique = list(dict.fromkeys(used_constraints))[:10]
-            parts.append(
-                "Constraint profiles already used (ensure variety):\n"
-                + "\n".join(f"  - {c}" for c in unique)
-            )
         diversity_block = (
             "\n\nDIVERSITY REQUIREMENTS — strictly enforce:\n"
             + "\n".join(parts)
-            + "\n\nEach persona MUST differ in name, task goal AND constraint profile."
+            + "\n\nEach persona MUST differ in task goal."
         )
 
     user_prompt = PERSONA_GENERATION_USER.format(
+        persona_library_json=json.dumps(prompt_library, indent=2),
         ui_context=ui_context,
         ui_analysis_json=ui_analysis.model_dump_json(indent=2),
         max_num_personas=max_personas,
@@ -524,14 +408,32 @@ def _generate_personas(
         if isinstance(data, str):
             data = json.loads(data) 
 
+        lib_map = {p.get("id"): p for p in relevant_personas if "id" in p}
         personas = []
         for i, item in enumerate(data):
-            if not item.get("persona_id"):
-                item["persona_id"] = f"persona_{i+1}"
-            personas.append(PersonaProfile(**item))
+            base_id = item.get("base_id")
+            if not base_id or base_id not in lib_map:
+                continue
+                
+            base_profile = lib_map[base_id].copy()
+            if "id" in base_profile:
+                del base_profile["id"]
+            if "ui_types" in base_profile:
+                del base_profile["ui_types"]
+                
+            merged = {
+                **base_profile,
+                "persona_id": f"persona_{i+1}",
+                "task_goal": item.get("task_goal", "Explore the page"),
+                "task_context": item.get("task_context", "Testing UI"),
+                "selection_rationale": item.get("selection_rationale", ""),
+                "entry_point": item.get("entry_point"),
+                "success_criteria": item.get("success_criteria", []),
+            }
+            personas.append(PersonaProfile(**merged))
 
         if not personas:
-            return None, "LLM returned zero personas"
+            return None, "LLM returned zero personas or failed to match library IDs"
 
         return personas[:max_personas], None
 
@@ -604,11 +506,15 @@ def _verify_traces(
 
     known_selectors: set[str] = set()
     known_hrefs:     set[str] = set()
+    input_selectors: set[str] = set()
 
     if ui_analysis:
         for el in getattr(ui_analysis, "interactive_elements", []):
             if el.selector:
-                known_selectors.add(el.selector.strip())
+                k = el.selector.strip()
+                known_selectors.add(k)
+                if getattr(el, "tag", "").lower() in ("input", "textarea", "select"):
+                    input_selectors.add(k)
         for path in getattr(ui_analysis, "critical_paths", []):
             entry = getattr(path, "entry_selector", None)
             if entry:
@@ -625,6 +531,7 @@ def _verify_traces(
     for result in simulation_results:
         step_verifs:      list[StepVerification] = []
         persona_discarded: list[str]             = []
+        previous_actions:  set[tuple]            = set()
 
         step_to_issues: dict[int, list[str]] = {}
         for iss in result.issues:
@@ -640,8 +547,13 @@ def _verify_traces(
             val   = step.value or ""
             err   = step.error_message or ""
             atype = step.action_type
+            
+            action_sig = (atype, sel, val, err)
 
-            if atype == "navigate" and "navigate_intercepted" in err:
+            if action_sig in previous_actions and atype != "observe":
+                verdict, confidence = TraceVerdict.INVALID, 0.95
+                reason = "Post-mortem Loop Detection: Exact identical action and consequence signature repeated."
+            elif atype == "navigate" and "navigate_intercepted" in err:
                 verdict, confidence = TraceVerdict.INVALID, 0.95
                 reason = f"navigate to {val!r} intercepted."
             elif atype == "navigate" and val.startswith(("/", "http")):
@@ -651,6 +563,9 @@ def _verify_traces(
             elif atype in ("click", "type") and not sel:
                 verdict, confidence = TraceVerdict.INVALID, 0.95
                 reason = "click/type with no target_selector."
+            elif atype == "type" and sel and sel not in input_selectors:
+                verdict, confidence = TraceVerdict.INVALID, 0.95
+                reason = f"Logical Impossibility: 'type' action attempted on non-input element {sel!r}."
             elif "ERR_FILE_NOT_FOUND" in err or "net::ERR" in err:
                 verdict, confidence = TraceVerdict.INVALID, 0.9
                 reason = f"Browser network error: {err[:80]}"
@@ -666,6 +581,8 @@ def _verify_traces(
             if verdict == TraceVerdict.INVALID:
                 persona_discarded.extend(flag_ids)
                 all_discarded.update(flag_ids)
+            elif atype != "observe":
+                previous_actions.add(action_sig)
 
             step_verifs.append(StepVerification(
                 step_number=step.step_number,

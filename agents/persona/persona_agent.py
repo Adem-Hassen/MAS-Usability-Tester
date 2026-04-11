@@ -387,6 +387,30 @@ class PersonaRunner:
                             error_message="Repeated action — loop guard triggered"))
                         return StopReason.REPEATED_ACTION
 
+                # ── Grounding Guard (Trace-to-State Heuristic) ────────────
+                if action_type in ("click", "type") and selector:
+                    valid_selectors = {
+                        getattr(el, "selector", "") for el in page_state.interactive_elements
+                    }
+                    if selector not in valid_selectors:
+                        logger.warning("persona.grounding_failed",
+                                       persona_id=self.persona.persona_id,
+                                       selector=selector)
+                        fake_result = ActionResult(
+                            success=False,
+                            action_type=action_type,
+                            target_selector=selector,
+                            value=value,
+                            error_message=f"Hallucination Blocked: Selector '{selector}' DOES NOT EXIST in the visible DOM. You must rely strictly on 'visible_evidence' and the UI map."
+                        )
+                        self._record_step(step_num, decision, page_state, fake_result)
+                        self._update_memory(step_num, action_type, selector, value, fake_result)
+                        if inline_issue:
+                            self._record_inline_issue(step_num, inline_issue, selector, fake_result)
+                        self.issues.extend(
+                            self._analyze_failure(step_num, decision, fake_result, page_state))
+                        continue
+
                 # ── Execute ───────────────────────────────────────────────
                 result = engine.execute_action(action_type, selector, value)
                 self._record_step(step_num, decision, page_state, result)

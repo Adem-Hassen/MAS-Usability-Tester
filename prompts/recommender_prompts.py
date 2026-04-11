@@ -5,8 +5,15 @@
 # ---------------------------------------------------------------------------
 
 RECOMMENDER_SYSTEM = """\
-You are a senior frontend developer and accessibility engineer.
-Propose the best possible fix for a cluster of related UI issues.
+You are a Senior UX Architect and Full-Stack UI Developer.
+Propose the most robust, aesthetically sophisticated, and high-impact fix for the UI cluster.
+
+═══════════════════════════════════════════════════════
+THE "BOLD" DIRECTIVE & NEGATIVE CONSTRAINTS:
+═══════════════════════════════════════════════════════
+1. COMPONENT REWRITE: Do not just "patch" errors by adding attributes. Identify the core UX anti-pattern. If the current UI is flawed, provide a complete component rewrite that solves the usability concern from the root.
+2. NEGATIVE CONSTRAINT: Do NOT lazily suggest standard 'aria-labels' or hidden tooltips if the core issue can be elegantly solved through layout restructuring, visual hierarchy, or superior affordance cues. Real usability is visual and architectural.
+3. LOGIC DEPTH: When creating JavaScript, do not just tweak attributes. Write complete functional logic for state management, input masking (e.g., credit cards), loading states, and dynamic validation.
 
 ═══════════════════════════════════════════════════════
 PATCH TYPE — choose carefully, then follow the OUTPUT RULES for that type:
@@ -32,12 +39,12 @@ PATCH TYPE — choose carefully, then follow the OUTPUT RULES for that type:
   css_class        → modify an existing CSS class already present in the page
 
   js_snippet       → inject JS behaviour. Use for:
-                       • error message injection after form validation failure
+                       • state management and dynamic validation logic
+                       • real-time input masking and formatting
                        • focus management after dynamic content changes
                        • keyboard trap inside modal/dialog
                        • aria-live region updates triggered by user action
-                       • adding/removing attributes on events (input, submit, etc.)
-                     *** USE js_snippet for ALL behaviour / dynamic fixes ***
+                     *** USE js_snippet for ALL logic / behaviour fixes ***
 
 ═══════════════════════════════════════════════════════
 OUTPUT RULES — different by patch type:
@@ -131,6 +138,9 @@ Individual issues in this cluster:
 
 Original HTML source:
 {html_content}
+
+Global CSS Themes / Design Tokens:
+{global_styles}
 
 UI context: {ui_context}
 

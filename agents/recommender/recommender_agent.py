@@ -221,6 +221,7 @@ def _propose_patch(
         )
 
     html_snippet = _extract_relevant_html(html_content, profile.affected_elements)
+    global_styles = _extract_global_styles(html_content)
 
     user = RECOMMENDER_USER.format(
         cluster_id=profile.cluster_id,
@@ -232,6 +233,7 @@ def _propose_patch(
         representative_description=profile.cluster_summary,
         issues_detail=_format_issues_detail(cluster.issues),
         html_content=html_snippet,
+        global_styles=global_styles,
         ui_context=ui_context,
     ) + overlap_note
 
@@ -425,6 +427,11 @@ def _extract_relevant_html(html_content: str, affected_elements: list[str]) -> s
             end   = min(len(html_content), idx + 6_000)
             return html_content[start:end]
     return html_content[:MAX_CHARS]
+
+
+def _extract_global_styles(html_content: str) -> str:
+    styles = re.findall(r'<style[^>]*>(.*?)</style>', html_content, re.DOTALL | re.IGNORECASE)
+    return "\n".join(styles).strip()
 
 
 def _call_recommender_llm(

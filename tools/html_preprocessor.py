@@ -55,9 +55,11 @@ def preprocess_for_analysis(html: str, max_chars: int = 12_000) -> str:
     h = _strip_html_comments(h)
     h = _strip_script_bodies(h)
     h = _strip_style_bodies(h)
+    h = _strip_svg_bodies(h)
     h = _strip_base64_uris(h)
     h = _truncate_long_attrs(h)
     h = _collapse_blank_lines(h)
+    h = _strip_empty_tags(h)
     h = _smart_truncate(h, max_chars)
     return h
 
@@ -83,6 +85,10 @@ _SCRIPT_RE  = re.compile(
 )
 _STYLE_RE   = re.compile(
     r"(<style\b[^>]*>)(.*?)(</style\s*>)",
+    re.DOTALL | re.IGNORECASE,
+)
+_SVG_RE = re.compile(
+    r"(<svg\b[^>]*>)(.*?)(</svg\s*>)",
     re.DOTALL | re.IGNORECASE,
 )
 
@@ -135,9 +141,28 @@ def _strip_style_bodies(html: str) -> str:
     return _STYLE_RE.sub(_replace, html)
 
 
+def _strip_svg_bodies(html: str) -> str:
+    """Replace <svg>…</svg> body with a short placeholder to save massive SVGs token usage."""
+    def _replace(m: re.Match) -> str:
+        open_tag  = m.group(1)
+        close_tag = m.group(3)
+        return f"{open_tag}<!-- SVG icon omitted -->{close_tag}"
+    return _SVG_RE.sub(_replace, html)
+
+
 def _strip_base64_uris(html: str) -> str:
     """Replace base64 data URIs with a short token."""
     return _BASE64_RE.sub(r'\1=\2[base64-data-omitted]\2', html)
+
+
+def _strip_empty_tags(html: str) -> str:
+    """Iteratively remove empty generic UI wrappers like <div></div> and <span></span> to save tokens."""
+    pattern = re.compile(r"<(div|span)(?:\s+class=[\"'][^\"']*[\"'])?\s*>\s*</\1>", re.IGNORECASE)
+    prev = None
+    while html != prev:
+        prev = html
+        html = pattern.sub("", html)
+    return html
 
 
 def _truncate_long_attrs(html: str, max_val_len: int = 200) -> str:

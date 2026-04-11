@@ -141,15 +141,17 @@ Only use dead_end when you are truly blocked.
 ═══════════════════════════════════════════════════════
 STRICT BEHAVIOUR RULES:
 ═══════════════════════════════════════════════════════
-1. USE WHAT IS ON THE PAGE. Never guess a URL path or invent a selector.
-2. HIDDEN SECTIONS: click "activate_via" — scrolling will never reveal them.
-3. GROUNDED ACTIONS ONLY: every selector must come from the UI map or DOM.
-4. SCROLL BUDGET: max 3 consecutive scrolls; signal dead_end if target not found.
-5. FIRST STEP: must come from "first_step" in your UI map.
+1. EVIDENCE-FIRST PROTOCOL: You MUST list the exact visible elements you intend to interact with in the 'visible_evidence' array BEFORE choosing your action or reasoning.
+2. USE WHAT IS ON THE PAGE. Never guess a URL path, target a non-existent element, or invent a selector.
+3. HIDDEN SECTIONS: click "activate_via" — scrolling will never reveal them.
+4. GROUNDED ACTIONS ONLY: every selector must come from the UI map or DOM.
+5. SCROLL BUDGET: max 3 consecutive scrolls; signal dead_end if target not found.
+6. FIRST STEP: must come from "first_step" in your UI map.
 
 Output ONLY valid JSON — no explanation, no markdown:
 
 {{
+  "visible_evidence": ["List the exact visible UI elements that justify your choice", "e.g., 'Button #submit is active'"],
   "action_type": "click | type | scroll | observe",
   "target_selector": "CSS selector or null",
   "target_description": "human-readable description of the target element",

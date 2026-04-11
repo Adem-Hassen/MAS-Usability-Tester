@@ -106,56 +106,39 @@ Analyze the HTML above. Output ONLY the JSON object. No explanation, no markdown
 
 PERSONA_GENERATION_SYSTEM = """\
 You are a UX research expert specializing in inclusive design and user simulation.
-Generate a diverse set of user personas for UI testing.
+Select a diverse set of user personas from the provided PREDEFINED PERSONA LIBRARY for UI testing, and assign them specific task goals based on the UI analysis.
 
-Output ONLY a valid JSON array of PersonaProfile objects — no explanation, no markdown.
+Output ONLY a valid JSON array of objects — no explanation, no markdown.
 
-Each PersonaProfile must match this exact schema:
+Each object MUST match this exact schema:
 {{
-  "persona_id": "string — e.g. 'persona_1'",
-  "name": "string — realistic full name e.g. 'Maria Santos'",
-  "age_range": "string — e.g. '25-35'",
-  "technical_skill": "low | medium | high",
-  "accessibility_constraints": ["string", ...],
-  "cognitive_limitations": ["string", ...],
+  "base_id": "string — EXACT base_id from the provided library (e.g. 'screen_reader_user')",
   "task_goal": "string — specific actionable goal on this UI",
   "task_context": "string — why this persona is here, their motivation",
   "selection_rationale": "string — which specific detected_issues_hint or accessibility risk this persona is designed to expose, and why",
   "entry_point": "string CSS selector or null",
-  "success_criteria": ["string", ...],
-  "risk_tolerance": "low | medium | high",
-  "latency_tolerance": "low | medium | high",
-  "interaction_style": "methodical | impatient | exploratory | cautious"
+  "success_criteria": ["string", ...]
 }}
 
 ═══════════════════════════════════════
 PERSONA DESIGN RULES:
 ═══════════════════════════════════════
-1. COVER DETECTED ISSUES: Read detected_issues_hint carefully. Design at least
-   one persona specifically to trigger each high-risk issue identified there.
+1. COVER DETECTED ISSUES: Read detected_issues_hint carefully. Assign personas
+   from the library specifically to trigger each high-risk issue identified.
    Reference the specific issue in selection_rationale.
 
-2. DIVERSITY IS MANDATORY — across ALL personas collectively ensure:
-   • At least one persona with accessibility_constraints (screen reader, keyboard-only,
-     colorblind, zoom user)
-   • At least one persona with low technical_skill or cognitive_limitations
-   • At least one persona that is impatient (interaction_style: "impatient")
-   • At least one persona representing the primary intended user
-   • NO two personas with the same interaction_style unless max_num_personas > 4
+2. DIVERSITY IS MANDATORY: Collectively ensure diverse selection from the library.
+   Do not pick the exact same base_id more than once.
 
 3. ENTRY POINT — set this to the FIRST element the persona should interact with:
    • For login forms: the email/username input selector (e.g. "#email")
    • For dashboards: the first nav item or primary CTA
-   • For multi-step forms: the first visible input
    • null ONLY if the persona needs to read the full page before acting
-     (e.g. a cautious persona scanning for trust signals on a landing page)
 
 4. SUCCESS CRITERIA must be OBSERVABLE by a browser automation agent:
    ✓ "A success message element is visible on the page"
    ✓ "The page title changed to 'Dashboard'"
-   ✓ "An element with text 'Welcome' is visible"
-   ✗ "The user feels satisfied" — unobservable, never use
-   ✗ "The URL changed to /dashboard" — only use if the page actually navigates
+   ✗ "The URL changed" — only use if page navigates
 
 5. TASK GOAL must reference ACTUAL elements from the UI analysis:
    ✓ "Fill in the #email and #password fields and click .btn-login"
@@ -164,17 +147,19 @@ PERSONA DESIGN RULES:
 6. CREDENTIALS: If demo_credentials are available in the UI analysis, the persona's
    task_goal must explicitly say "using the demo credentials shown on the page".
 
-7. Generate AT MOST {max_num_personas} personas. Generate fewer for simple UIs
-   (< 3 interactive elements → 1 persona max).
+7. Generate AT MOST {max_num_personas} outputs. Generate fewer for simple UIs (< 3 interactive elements).
 """
 
 PERSONA_GENERATION_USER = """\
+PREDEFINED PERSONA LIBRARY:
+{persona_library_json}
+
 UI context: {ui_context}
 
 UI analysis (including detected issues and demo credentials):
 {ui_analysis_json}
 
-Generate diverse personas (max {max_num_personas}) designed to expose the detected issues.
+Select diverse personas from the library (max {max_num_personas}) designed to expose the detected issues.
 Output ONLY the JSON array. No explanation, no markdown.
 """
 

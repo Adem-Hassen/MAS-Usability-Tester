@@ -263,14 +263,28 @@ def groq_chat_completion(
     base_delay     = getattr(s, "llm_retry_delay_seconds",         5.0)
     fixed_delay    = inter_call_delay or getattr(s, "llm_inter_request_delay_seconds", 0.0)
 
-    key_state = _get_key_state(api_key, max_concurrent, tpm_limit)
-    base_url  = _base_url_for(model)
-    client    = OpenAI(api_key=api_key, base_url=base_url)
+    keys = [k.strip() for k in api_key.split(",") if k.strip()]
+    if not keys:
+        return "", "No valid API keys provided."
 
     # Estimate tokens conservatively: ~4 chars/token for English text
     estimated_tokens = sum(len(m.get("content", "")) // 4 for m in messages) + max_tokens
 
+    current_model = model
+    fallback_model = "llama-3.1-8b-instant"
+
     for attempt in range(1, max_retries + 1):
+        
+        # ── API Key Rotation and Fallback Logic ───────────────────────────
+        # Switch to fallback model on final retries to try avoiding strict limits
+        if attempt >= max_retries - 1 and "70b" in current_model.lower():
+            logger.info("llm.rate_limit.fallback_model", original=current_model, fallback=fallback_model)
+            current_model = fallback_model
+
+        # Cycle through available keys uniformly
+        active_key = keys[(attempt - 1) % len(keys)]
+        key_state = _get_key_state(active_key, max_concurrent, tpm_limit)
+        client = OpenAI(api_key=active_key, base_url=_base_url_for(current_model))
 
         # ── Step 1: Wait for any active 429 backoff to clear ─────────────
         key_state.wait_for_backoff_clear()
@@ -287,10 +301,10 @@ def groq_chat_completion(
                 time.sleep(fixed_delay + random.uniform(0, 0.1))
 
             logger.debug(f"llm.{task}.attempt",
-                         model=model, attempt=attempt)
+                         model=current_model, key_idx=(attempt - 1) % len(keys), attempt=attempt)
 
             response = client.chat.completions.create(
-                model=model,
+                model=current_model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -321,6 +335,17 @@ def groq_chat_completion(
 
         except RateLimitError as e:
             retry_after = _parse_retry_after(e)
+            
+            # --- FIX: Immediate Fallback on Hard Rate Limit ---
+            if retry_after and retry_after > 60.0 and "70b" in current_model.lower() and attempt < max_retries:
+                logger.warning("llm.rate_limit.hard_limit", retry_after=retry_after, model=current_model)
+                current_model = fallback_model
+                logger.info("llm.rate_limit.fallback_triggered", new_model=current_model)
+                
+                # Do NOT sleep for 70+ minutes. Sleep briefly and retry immediately on the fallback bucket.
+                time.sleep(random.uniform(1.0, 3.0))
+                continue
+
             jitter      = random.uniform(1.0, 3.0)
             backoff     = (retry_after + jitter) if retry_after else min(
                 base_delay * (2 ** (attempt - 1)) + jitter, 60.0
