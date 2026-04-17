@@ -22,15 +22,24 @@ from backend.session_store import Session, SessionStatus, EventKind, SessionStor
 # ---------------------------------------------------------------------------
 # Try to import the real MAS system
 # ---------------------------------------------------------------------------
+import os
+import sys
+import logging
+import traceback
+from pathlib import Path as _P
+
+logger = logging.getLogger(__name__)
+
+sys.path.insert(0, str(_P(__file__).parent.parent))
+
 try:
-    import sys
-    from pathlib import Path as _P
-    sys.path.insert(0, str(_P(__file__).parent.parent))
     from core.graph import run_evaluation
     from config.settings import settings
     MAS_AVAILABLE = True
-except ImportError:
+except Exception as e:
     MAS_AVAILABLE = False
+    logger.error(f"FATAL: The  MAS core failed to load. Error: {e}")
+    logger.error(traceback.format_exc())
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +75,13 @@ def _run_pipeline_sync(session: Session, store: SessionStore) -> None:
     if MAS_AVAILABLE:
         _run_real_pipeline(session, store, emit, total_pages, all_results)
     else:
-        _run_simulation(session, store, emit, total_pages, all_results)
+        if os.getenv("ALLOW_SIMULATION_FALLBACK", "false").lower() == "true":
+            emit(EventKind.LOG, level="warning", message="MAS unavailable. Running in Simulation Mode.")
+            _run_simulation(session, store, emit, total_pages, all_results)
+        else:
+            msg = "MAS pipeline is not available. Please check backend logs for import errors."
+            logger.error(msg)
+            raise RuntimeError(msg)
 
     # ── Build combined results object ─────────────────────────────────
     session.results = {

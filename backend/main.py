@@ -33,6 +33,11 @@ from fastapi.responses import FileResponse, StreamingResponse
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Auto-inject venv site-packages for WebApp environment parity
+venv_site_packages = PROJECT_ROOT / "venv" / "lib" / "python3.10" / "site-packages"
+if venv_site_packages.exists() and str(venv_site_packages) not in sys.path:
+    sys.path.insert(1, str(venv_site_packages))
+
 from backend.session_store import SessionStore, Session, SessionStatus, EventKind
 from backend.pipeline_runner import run_pipeline_async
 
