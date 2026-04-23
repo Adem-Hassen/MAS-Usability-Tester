@@ -55,7 +55,8 @@ async def run_pipeline_async(session: Session, store: SessionStore) -> None:
         session.error   = str(e)
         session.finished_at = datetime.utcnow()
         store.emit(session.session_id, EventKind.ERROR,
-                   message=str(e), trace=traceback.format_exc())
+                   stage="pipeline", message=str(e),
+                   traceback=traceback.format_exc())
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +69,19 @@ def _run_pipeline_sync(session: Session, store: SessionStore) -> None:
     total_pages = len(session.input_paths)
     all_results = []
 
+    # ── V1 structured event: pipeline_start ────────────────────────────
+    _model = ""
+    try:
+        from config.settings import settings as _s
+        _model = _s.supervisor_llm_model
+    except Exception:
+        pass
+    emit(EventKind.PIPELINE_START,
+         job_id=session.session_id,
+         file_count=total_pages,
+         model=_model)
+
+    # Legacy events
     emit(EventKind.LOG, level="info",
          message=f"Starting evaluation of {total_pages} page(s)")
     emit(EventKind.PROGRESS, value=2, label="Initialising pipeline")
@@ -84,6 +98,9 @@ def _run_pipeline_sync(session: Session, store: SessionStore) -> None:
             raise RuntimeError(msg)
 
     # ── Build combined results object ─────────────────────────────────
+    total_issues   = sum(r.get("total_issues", 0)    for r in all_results if not r.get("error"))
+    total_patches  = sum(r.get("patches_applied", 0) for r in all_results if not r.get("error"))
+
     session.results = {
         "session_id":  session.session_id,
         "pages_total": total_pages,
@@ -107,10 +124,20 @@ def _run_pipeline_sync(session: Session, store: SessionStore) -> None:
     session.finished_at = datetime.utcnow()
     session.progress    = 100
 
+    # ── V1 structured event: pipeline_complete ─────────────────────────
+    has_pdf = (session.output_dir / "report.pdf").exists()
+    emit(EventKind.PIPELINE_COMPLETE,
+         job_id=session.session_id,
+         issues_found=total_issues,
+         patches_applied=total_patches,
+         report_url=f"/api/v1/evaluate/{session.session_id}/report" if has_pdf else "",
+         download_url=f"/api/v1/evaluate/{session.session_id}/download")
+
+    # Legacy events
     emit(EventKind.PROGRESS, value=100, label="Complete")
     emit(EventKind.DONE,
          pages_done=session.pages_done,
-         has_pdf=(session.output_dir / "report.pdf").exists())
+         has_pdf=has_pdf)
 
 
 # ---------------------------------------------------------------------------
@@ -182,17 +209,38 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
             self._last_step = None
 
         def write(self, msg: str) -> int:
-            # Check direct event name matches
+            clean_msg = msg.strip()
+            if not clean_msg:
+                return len(msg)
+            
+            # 1. Parse simple log level if possible
+            level = "info"
+            if "warning" in msg.lower() or "[warning" in msg.lower():
+                level = "warning"
+            elif "error" in msg.lower() or "[error" in msg.lower():
+                level = "error"
+            
+            # Remove ANSI colors if any (ConsoleRenderer might output ANSI)
+            import re
+            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+            clean_text = ansi_escape.sub('', clean_msg)
+            
+            # Emit the raw log event so the UI can display traces
+            self._emit(EventKind.LOG, level=level, message=clean_text)
+
+            # 2. Check direct event name matches
             for event_prefix, (step_id, status, prog, label) in _STEP_MAP.items():
                 if event_prefix in msg:
                     self._emit_step(step_id, status, prog, label)
+                    self._emit_v1_event(event_prefix, msg)
                     return len(msg)
 
-            # Check function/module name matches
+            # 3. Check function/module name matches
             for func_key, (step_id, status, prog, label) in _FUNC_STEP_MAP.items():
                 if func_key in msg:
                     if step_id != self._last_step:
                         self._emit_step(step_id, status, prog, label)
+                        self._emit_v1_event(func_key, msg)
                     return len(msg)
 
             return len(msg)
@@ -205,6 +253,44 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
             self._emit(EventKind.STEP, step=step_id, status=status,
                        pages_total=self._total, label=label)
             self._emit(EventKind.PROGRESS, value=prog, label=label)
+
+        def _emit_v1_event(self, event_key, raw_msg):
+            """Emit structured V1 events based on the intercepted structlog event name."""
+            # Supervisor analysis complete
+            if event_key == "graph.supervisor_node.done":
+                self._emit(EventKind.SUPERVISOR_ANALYSIS, summary="UI analysis complete")
+
+            # Persona simulation lifecycle
+            elif event_key == "page_pipeline.start":
+                self._emit(EventKind.PERSONA_START,
+                           persona_id="batch", persona_name="All personas")
+            elif event_key == "page_pipeline.persona_done":
+                # Extract persona info from log if possible
+                self._emit(EventKind.PERSONA_COMPLETE,
+                           persona_id="batch", issues_found=0)
+
+            # Clustering
+            elif event_key in ("clustering_node", "cluster_engine"):
+                if "clustering_node" == event_key:
+                    self._emit(EventKind.CLUSTERING_START, raw_issue_count=0)
+                else:
+                    self._emit(EventKind.CLUSTERING_COMPLETE,
+                               cluster_count=0, duplicate_count=0)
+
+            # Recommender
+            elif event_key in ("recommender_node", "recommender"):
+                self._emit(EventKind.RECOMMENDER_START,
+                           recommender_id="batch", cluster_ids=[])
+
+            # Conflict resolution
+            elif event_key == "conflict_resolver":
+                self._emit(EventKind.CONFLICT_RESOLVED,
+                           resolution_strategy="llm")
+
+            # Patch application
+            elif event_key == "patch_applicator":
+                self._emit(EventKind.PATCH_APPLIED,
+                           file_name="", patch_count=0)
 
     _bridge_stream = _SSEBridgeStream(emit, total_pages)
 

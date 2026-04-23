@@ -1,6 +1,7 @@
 # backend/session_store.py
 """
 In-memory session store with async SSE subscriber queues.
+Supports event-ID-based reconnection via Last-Event-ID.
 In production, replace with Redis pub/sub.
 """
 
@@ -27,13 +28,36 @@ class SessionStatus(str, Enum):
 
 
 class EventKind(str, Enum):
+    # New structured event types
+    PIPELINE_START       = "pipeline_start"
+    SUPERVISOR_ANALYSIS  = "supervisor_analysis"
+    PERSONA_START        = "persona_start"
+    PERSONA_ACTION       = "persona_action"
+    PERSONA_COMPLETE     = "persona_complete"
+    CLUSTERING_START     = "clustering_start"
+    CLUSTERING_COMPLETE  = "clustering_complete"
+    RECOMMENDER_START    = "recommender_start"
+    RECOMMENDER_PATCH    = "recommender_patch"
+    CONFLICT_DETECTED    = "conflict_detected"
+    CONFLICT_RESOLVED    = "conflict_resolved"
+    PATCH_APPLIED        = "patch_applied"
+    PIPELINE_COMPLETE    = "pipeline_complete"
+    ERROR                = "error"
+
+    # Legacy event types (kept for backward compatibility)
     LOG      = "log"
     PROGRESS = "progress"
     STEP     = "step"
     ISSUE    = "issue"
     PATCH    = "patch"
     DONE     = "done"
-    ERROR    = "error"
+
+
+# Terminal event types — SSE stream closes after emitting one of these
+_TERMINAL_EVENTS = {
+    EventKind.DONE, EventKind.ERROR,
+    EventKind.PIPELINE_COMPLETE,
+}
 
 
 @dataclass
@@ -54,9 +78,10 @@ class Session:
 class SessionStore:
     def __init__(self):
         self._sessions: dict[str, Session] = {}
-        self._events:   dict[str, list[dict]] = {}       # buffered events
+        self._events:   dict[str, list[dict]] = {}       # buffered events (id-indexed)
         self._queues:   dict[str, list[asyncio.Queue]] = {}  # subscriber queues
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._event_counter: dict[str, int] = {}          # per-session event ID counter
 
     # ------------------------------------------------------------------
     # Session lifecycle
@@ -85,6 +110,7 @@ class SessionStore:
         self._sessions[session_id] = session
         self._events[session_id]   = []
         self._queues[session_id]   = []
+        self._event_counter[session_id] = 0
         return session
 
     def get(self, session_id: str) -> Optional[Session]:
@@ -94,6 +120,7 @@ class SessionStore:
         self._sessions.pop(session_id, None)
         self._events.pop(session_id, None)
         self._queues.pop(session_id, None)
+        self._event_counter.pop(session_id, None)
         session_dir = SESSIONS_DIR / session_id
         if session_dir.exists():
             shutil.rmtree(session_dir)
@@ -103,18 +130,39 @@ class SessionStore:
     # ------------------------------------------------------------------
 
     def emit(self, session_id: str, kind: str, **payload) -> None:
-        """Emit an event to all subscribers and buffer it."""
-        event = {"kind": kind, "ts": datetime.utcnow().isoformat(), **payload}
+        """Emit an event to all subscribers and buffer it with an auto-incrementing ID."""
+        # Assign sequential event ID for Last-Event-ID reconnection
+        event_id = self._event_counter.get(session_id, 0)
+        self._event_counter[session_id] = event_id + 1
+
+        event = {
+            "id": event_id,
+            "kind": kind,
+            "ts": datetime.utcnow().isoformat(),
+            **payload,
+        }
+
         if session_id in self._events:
-           self._events[session_id].append(event)
-    # Thread-safe: schedule put_nowait on the event loop from any thread
+            self._events[session_id].append(event)
+
+        # Thread-safe: schedule put_nowait on the event loop from any thread
         loop = self._loop
         if loop is None:
-         return
+            return
         for q in list(self._queues.get(session_id, [])):
-          loop.call_soon_threadsafe(q.put_nowait, event)
-    def get_events(self, session_id: str) -> list[dict]:
-        return list(self._events.get(session_id, []))
+            loop.call_soon_threadsafe(q.put_nowait, event)
+
+    def get_events(self, session_id: str, after_id: int = -1) -> list[dict]:
+        """Return buffered events, optionally only those after a given event ID."""
+        all_events = self._events.get(session_id, [])
+        if after_id < 0:
+            return list(all_events)
+        return [e for e in all_events if e.get("id", 0) > after_id]
+
+    def is_terminal(self, event: dict) -> bool:
+        """Check if an event is terminal (should close the SSE stream)."""
+        kind = event.get("kind", "")
+        return kind in _TERMINAL_EVENTS
 
     async def subscribe(self, session_id: str) -> AsyncGenerator[dict, None]:
         q: asyncio.Queue = asyncio.Queue()
@@ -123,7 +171,7 @@ class SessionStore:
             while True:
                 event = await asyncio.wait_for(q.get(), timeout=120)
                 yield event
-                if event.get("kind") in (EventKind.DONE, EventKind.ERROR):
+                if self.is_terminal(event):
                     break
         except asyncio.TimeoutError:
             pass

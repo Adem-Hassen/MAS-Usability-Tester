@@ -311,6 +311,16 @@ class PlaywrightEngine:
         """)
 
         self._page = self._context.new_page()
+        
+        # Explicitly handle dialogs to prevent Playwright's auto-dismiss from crashing
+        # when it hits race conditions. We just safely accept or dismiss.
+        def _safe_dialog_handler(dialog):
+            try:
+                dialog.accept()
+            except Exception:
+                pass
+                
+        self._page.on("dialog", _safe_dialog_handler)
 
         url = sandbox_path if sandbox_path.startswith("file://") else f"file://{sandbox_path}"
         self._page.goto(url, wait_until="domcontentloaded")
