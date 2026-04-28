@@ -20,6 +20,7 @@ class PageContext:
 
     # ── Inputs ────────────────────────────────────────────────────────────
     html_source_path: str = ""
+    original_html_path: str = ""
     html_content:     str = ""
     ui_context:       str = "General web UI"
     storage_seed:     Optional[dict] = None

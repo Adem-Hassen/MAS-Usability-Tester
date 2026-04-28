@@ -57,10 +57,11 @@ def recommender_node(state: dict) -> dict:
                     recommender_id=profile.recommender_id,
                     overlapping=overlapping_selectors)
 
+    ui_analysis  = state.get("ui_analysis")
     html_content = state.get("html_content", "")
     ui_context   = state.get("ui_context", "General web UI")
 
-    proposal = _propose_patch(profile, cluster, html_content, ui_context, overlapping_selectors)
+    proposal = _propose_patch(profile, cluster, html_content, ui_context, ui_analysis, overlapping_selectors)
 
     if proposal is None:
         logger.warning("recommender.proposal_failed",
@@ -205,7 +206,8 @@ def _propose_patch(
     cluster: IssueCluster,
     html_content: str,
     ui_context: str,
-    overlapping_selectors: list[str],
+    ui_analysis: Optional[UIAnalysis] = None,
+    overlapping_selectors: list[str] = [],
 ) -> Optional[PatchProposal]:
 
     system = RECOMMENDER_SYSTEM.format(
@@ -235,6 +237,7 @@ def _propose_patch(
         html_content=html_snippet,
         global_styles=global_styles,
         ui_context=ui_context,
+        ui_analysis_json=ui_analysis.model_dump_json(indent=2) if ui_analysis else "None provided",
     ) + overlap_note
 
     raw, error = _call_recommender_llm(system, user, task="propose_patch")

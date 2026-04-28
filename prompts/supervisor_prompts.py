@@ -113,6 +113,7 @@ Output ONLY a valid JSON array of objects — no explanation, no markdown.
 Each object MUST match this exact schema:
 {{
   "base_id": "string — EXACT base_id from the provided library (e.g. 'screen_reader_user')",
+  "name" : "string — name of the persona (e.g. 'Jon doe')",
   "task_goal": "string — specific actionable goal on this UI",
   "task_context": "string — why this persona is here, their motivation",
   "selection_rationale": "string — which specific detected_issues_hint or accessibility risk this persona is designed to expose, and why",
@@ -388,6 +389,10 @@ Output ONLY a valid JSON array of RecommenderProfile objects — no explanation,
 ]
 
 Rules:
+- PROACTIVE DESIGN MANDATE: Instruct the agent to go BEYOND the specific issues.
+  If the cluster is "Accessibility", the agent should also refine visual focus indicators.
+  If the cluster is "Usability", the agent should also improve spacing and layout consistency.
+  The fix_strategy_hint should explicitly say: "Also perform a general design audit of the affected area and improve visual polish (spacing, typography, alignment)."
 - ONE profile per cluster. Multiple recommenders per cluster (num_recommenders > 1)
   only for clusters with 8+ issues spanning 5+ distinct elements.
 - recommender_name must be unique across the array.

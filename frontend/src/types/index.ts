@@ -34,9 +34,9 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'di
 
 // Unified SSE event — discriminated union via `kind`
 export interface StreamEvent {
-  id?:     number;
-  kind:    SSEEventType;
-  ts:      string;
+  id?: number;
+  kind: SSEEventType;
+  ts: string;
   // pipeline_start
   job_id?: string;
   file_count?: number;
@@ -75,79 +75,86 @@ export interface StreamEvent {
   report_url?: string;
   download_url?: string;
   // progress (legacy)
-  value?:  number;
-  label?:  string;
+  value?: number;
+  label?: string;
   // step (legacy)
-  step?:   string;
+  step?: string;
   status?: StepStatus;
-  page?:   string;
+  page?: string;
   page_num?: number;
   pages_total?: number;
   // log
-  level?:  'info' | 'warning' | 'error';
+  level?: 'info' | 'warning' | 'error';
   message?: string;
   // issue (legacy)
-  issue_id?:    string;
-  title?:       string;
-  severity?:    Severity;
-  category?:    string;
+  issue_id?: string;
+  title?: string;
+  severity?: Severity;
+  category?: string;
   description?: string;
   // patch (legacy)
-  patch_id?:    string;
-  target?:      string;
-  patch_type?:  string;
+  patch_id?: string;
+  target?: string;
+  patch_type?: string;
   // done (legacy)
   pages_done?: number;
-  has_pdf?:    boolean;
+  has_pdf?: boolean;
   // error
   stage?: string;
   traceback?: string;
   // pipeline_complete extras
   patches_applied?: number;
   duplicates_removed?: number;
+  // Live Preview
+  screenshot?: string;
 }
 
 export interface PipelineStep {
-  id:      string;
-  label:   string;
-  status:  StepStatus;
-  page?:   string;
+  id: string;
+  label: string;
+  status: StepStatus;
+  page?: string;
   elapsed?: number;  // seconds
 }
 
 export interface Issue {
-  issue_id:    string;
-  title:       string;
-  severity:    Severity;
-  category:    string;
+  issue_id: string;
+  title: string;
+  severity: Severity;
+  category: string;
   description: string;
-  page:        string;
+  page: string;
 }
 
 export interface Patch {
-  patch_id:    string;
-  target:      string;
+  patch_id: string;
+  target: string;
   description: string;
-  patch_type:  string;
-  page:        string;
+  patch_type: string;
+  page: string;
 }
 
 export interface PageResult {
-  page:            string;
-  fixed_file?:     string;
-  report_file?:    string;
-  overall_score?:  number;
-  total_issues?:   number;
+  page: string;
+  fixed_file?: string;
+  report_file?: string;
+  overall_score?: number;
+  total_issues?: number;
   patches_applied?: number;
-  summary?:        string;
+  summary?: string;
   recommendations?: string[];
-  error?:          string;
+  error?: string;
 }
 
 export interface SessionResults {
-  session_id:   string;
-  pages_total:  number;
-  pages_done:   number;
-  pages:        PageResult[];
+  session_id: string;
+  pages_total: number;
+  pages_done: number;
+  pages: PageResult[];
   finished_at?: string;
+  score_avg?: number;
+  issues_total?: number;
+  patches_total?: number;
+  fix_rate?: number;
+  summary?: string;
 }

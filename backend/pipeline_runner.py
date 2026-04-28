@@ -28,9 +28,10 @@ import logging
 import traceback
 from pathlib import Path as _P
 
-logger = logging.getLogger(__name__)
-
 sys.path.insert(0, str(_P(__file__).parent.parent))
+
+from monitoring.logger import get_logger
+logger = get_logger(__name__)
 
 try:
     from core.graph import run_evaluation
@@ -97,17 +98,44 @@ def _run_pipeline_sync(session: Session, store: SessionStore) -> None:
             logger.error(msg)
             raise RuntimeError(msg)
 
-    # ── Build combined results object ─────────────────────────────────
-    total_issues   = sum(r.get("total_issues", 0)    for r in all_results if not r.get("error"))
-    total_patches  = sum(r.get("patches_applied", 0) for r in all_results if not r.get("error"))
+    # ── Build combined results object ─────────────────────────────────    # total_issues and total_patches are derived from the aggregated reports
+    total_issues  = 0
+    total_patches = 0
+    for r in all_results:
+        # r is a PageContext object
+        if hasattr(r, "report") and r.report:
+            total_issues  += r.report.total_issues_found
+            total_patches += r.report.total_patches_applied
+        elif isinstance(r, dict):
+            # Fallback for dict-based results
+            total_issues  += r.get("total_issues", 0)
+            total_patches += r.get("total_patches", 0)
+
+    total_pages = len(session.input_paths)
+
+    # Calculate aggregates
+    total_score = sum(r.get("overall_score", 0) for r in all_results if "overall_score" in r)
+    score_avg = round(total_score / len(all_results), 1) if all_results else 0
 
     session.results = {
-        "session_id":  session.session_id,
-        "pages_total": total_pages,
-        "pages_done":  session.pages_done,
-        "pages":       all_results,
-        "finished_at": session.finished_at.isoformat() if session.finished_at else None,
+        "session_id":     session.session_id,
+        "pages_total":    total_pages,
+        "pages_done":     session.pages_done,
+        "pages":          all_results,
+        "score_avg":      score_avg,
+        "issues_total":   total_issues,
+        "patches_total":  total_patches,
+        "fix_rate":       round((total_patches / total_issues * 100), 1) if total_issues > 0 else 0,
+        "finished_at":    session.finished_at.isoformat() if session.finished_at else None,
     }
+
+    # Save results to disk for recovery
+    try:
+        (session.output_dir / "results.json").write_text(
+            json.dumps(session.results, indent=2, default=str), encoding="utf-8"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to save results.json: {e}")
 
     # ── Generate PDF ──────────────────────────────────────────────────
     emit(EventKind.STEP, step="pdf_generation", status="running",
@@ -182,6 +210,11 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
         "page_pipeline.verification_failed":   ("verification", "done", 50, "Verification — needs correction"),
         "page_pipeline.done":           ("report",       "done",    65, "Page evaluation complete"),
         "correction_loop.prepared":     ("verification", "running", 50, "Running correction loop…"),
+        "recommender.start":            ("recommender",  "running", 38, "Generating patches…"),
+        "recommender.proposal_complete": ("recommender", "running", 42, "Patch generated"),
+        "recommender.proposal_failed":   ("recommender", "running", 42, "Patch generation failed"),
+        "persona.start":                ("personas",     "running", 18, "Persona started"),
+        "persona.action":               ("personas",     "running", 20, "Persona action"),
     }
     # Map internal function names to step IDs (from the _run_* calls in graph.py)
     _FUNC_STEP_MAP = {
@@ -189,7 +222,6 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
         "clustering_node":      ("clustering",   "running", 30, "Clustering issues…"),
         "cluster_engine":       ("clustering",   "done",    35, "Issue clustering complete"),
         "recommender_node":     ("recommender",  "running", 38, "Generating patches…"),
-        "recommender":          ("recommender",  "running", 38, "Generating patch proposals…"),
         "conflict_resolver":    ("resolver",     "running", 45, "Resolving conflicts…"),
         "patch_applicator":     ("applicator",   "running", 50, "Applying patches…"),
         "verification_node":    ("verification", "running", 55, "Verifying fixes…"),
@@ -254,6 +286,14 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
                        pages_total=self._total, label=label)
             self._emit(EventKind.PROGRESS, value=prog, label=label)
 
+        def _extract_field(self, msg, key):
+            """Extract a field value from a structlog console-formatted message."""
+            import re
+            # Try key='value', key="value", or key=value
+            pattern = fr"{key}=(['\"]?)(.*?)\1(?:\s|$|,)"
+            match = re.search(pattern, msg)
+            return match.group(2) if match else None
+
         def _emit_v1_event(self, event_key, raw_msg):
             """Emit structured V1 events based on the intercepted structlog event name."""
             # Supervisor analysis complete
@@ -268,6 +308,25 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
                 # Extract persona info from log if possible
                 self._emit(EventKind.PERSONA_COMPLETE,
                            persona_id="batch", issues_found=0)
+            
+            elif event_key == "persona.start":
+                pid = self._extract_field(raw_msg, "persona_id")
+                pname = self._extract_field(raw_msg, "persona_name")
+                screenshot = self._extract_field(raw_msg, "screenshot")
+                self._emit(EventKind.PERSONA_START,
+                           persona_id=pid, persona_name=pname, screenshot=screenshot)
+
+            elif event_key == "persona.action":
+                pid = self._extract_field(raw_msg, "persona_id")
+                pname = self._extract_field(raw_msg, "persona_name")
+                atype = self._extract_field(raw_msg, "action_type")
+                sel = self._extract_field(raw_msg, "selector")
+                res = self._extract_field(raw_msg, "result")
+                screenshot = self._extract_field(raw_msg, "screenshot")
+                self._emit(EventKind.PERSONA_ACTION,
+                           persona_id=pid, persona_name=pname,
+                           action_type=atype, selector=sel, result=res,
+                           screenshot=screenshot)
 
             # Clustering
             elif event_key in ("clustering_node", "cluster_engine"):
@@ -278,7 +337,16 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
                                cluster_count=0, duplicate_count=0)
 
             # Recommender
-            elif event_key in ("recommender_node", "recommender"):
+            elif event_key == "recommender.start":
+                self._emit(EventKind.RECOMMENDER_START,
+                           recommender_id="batch", cluster_ids=[])
+            elif event_key == "recommender.proposal_complete":
+                self._emit(EventKind.RECOMMENDER_PATCH,
+                           status="done", message="Patch generated")
+            elif event_key == "recommender.proposal_failed":
+                self._emit(EventKind.RECOMMENDER_PATCH,
+                           status="error", message="Patch generation failed")
+            elif event_key == "recommender_node":
                 self._emit(EventKind.RECOMMENDER_START,
                            recommender_id="batch", cluster_ids=[])
 
@@ -335,7 +403,8 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
     # Build a lookup from source path stem to PageContext and Report
     ctx_by_stem = {}
     for ctx in page_contexts:
-        stem = Path(ctx.html_source_path).stem
+        base_path = getattr(ctx, "original_html_path", "") or ctx.html_source_path
+        stem = Path(base_path).stem
         # Correction loop creates temp file names — map back to original
         # by matching against the input pages list
         for p in pages:
@@ -348,7 +417,13 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
     for rpt in reports:
         if rpt is None:
             continue
-        stem = Path(rpt.html_source_path).stem
+        # If rpt is a dictionary (can happen with Pydantic serialization)
+        if isinstance(rpt, dict):
+            base_path = rpt.get("original_html_path", "") or rpt.get("html_source_path", "")
+        else:
+            base_path = getattr(rpt, "original_html_path", "") or rpt.html_source_path
+            
+        stem = Path(base_path).stem
         for p in pages:
             if Path(p["html_path"]).stem in stem:
                 stem = Path(p["html_path"]).stem
@@ -360,6 +435,10 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
         page_num = idx + 1
         ctx      = ctx_by_stem.get(stem)
         report   = report_by_stem.get(stem)
+        
+        logger.info("pipeline.extract_results", stem=stem, 
+                    has_ctx=bool(ctx), has_report=bool(report),
+                    issues=len(ctx.verified_issues) if ctx else 0)
 
         # Emit issues from page context
         if ctx:
@@ -368,11 +447,12 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
                     issue_d = issue.model_dump() if hasattr(issue, "model_dump") else issue
                     emit(EventKind.ISSUE,
                          page=stem,
-                         issue_id=issue_d.get("issue_id"),
-                         title=issue_d.get("title"),
-                         severity=str(issue_d.get("severity", "medium")),
-                         category=str(issue_d.get("category", "usability")),
-                         description=issue_d.get("description", ""))
+                         issue_id=issue.issue_id,
+                         title=issue.title,
+                         severity=str(issue.severity),
+                         category=str(issue.category),
+                         target=issue.affected_element or "",
+                         description=issue.description)
 
             # Emit patches
             ups = ctx.unified_patch_set
@@ -381,10 +461,10 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
                     patch_d = patch.model_dump() if hasattr(patch, "model_dump") else patch
                     emit(EventKind.PATCH,
                          page=stem,
-                         patch_id=patch_d.get("resolved_patch_id"),
-                         target=patch_d.get("target_element"),
-                         description=patch_d.get("description", ""),
-                         patch_type=patch_d.get("patch_type", "html_attribute"))
+                         patch_id=patch.resolved_patch_id,
+                         target=patch.target_element,
+                         description=patch.description,
+                         patch_type=str(patch.patch_type))
 
             # Save patched HTML
             patched = ctx.patched_html_content or ctx.html_content
@@ -401,6 +481,7 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
 
             all_results.append({
                 "page":            stem,
+                "original_file":   Path(page["html_path"]).name,
                 "fixed_file":      f"{stem}_fixed.html" if ctx and (ctx.patched_html_content or ctx.html_content) else None,
                 "report_file":     f"{stem}_report.json",
                 "overall_score":   report.overall_score,
@@ -506,6 +587,7 @@ def _run_simulation(session, store, emit, total_pages, all_results):
         score = round(random.uniform(6.5, 9.2), 1)
         all_results.append({
             "page":            stem,
+            "original_file":   page_path.name,
             "fixed_file":      out_file.name,
             "report_file":     None,
             "overall_score":   score,

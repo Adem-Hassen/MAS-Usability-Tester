@@ -114,7 +114,38 @@ class SessionStore:
         return session
 
     def get(self, session_id: str) -> Optional[Session]:
-        return self._sessions.get(session_id)
+        if session_id in self._sessions:
+            return self._sessions[session_id]
+        
+        # Try to recover from disk
+        session_dir = SESSIONS_DIR / session_id
+        if session_dir.exists():
+            input_dir = session_dir / "input"
+            output_dir = session_dir / "output"
+            
+            paths = list(input_dir.glob("*.html"))
+            session = Session(
+                session_id=session_id,
+                input_paths=paths,
+                output_dir=output_dir,
+            )
+            
+            # Try to load results if they exist
+            results_path = output_dir / "results.json"
+            if results_path.exists():
+                try:
+                    import json
+                    session.results = json.loads(results_path.read_text(encoding="utf-8"))
+                    session.status = SessionStatus.DONE
+                except Exception:
+                    pass
+            elif any(output_dir.glob("*_fixed.html")):
+                session.status = SessionStatus.DONE
+            
+            self._sessions[session_id] = session
+            return session
+            
+        return None
 
     def delete(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
@@ -124,6 +155,21 @@ class SessionStore:
         session_dir = SESSIONS_DIR / session_id
         if session_dir.exists():
             shutil.rmtree(session_dir)
+
+    def list_all(self) -> list[Session]:
+        """Scan disk and return all available sessions."""
+        sessions = []
+        if not SESSIONS_DIR.exists():
+            return []
+            
+        for d in SESSIONS_DIR.iterdir():
+            if d.is_dir():
+                s = self.get(d.name)
+                if s:
+                    sessions.append(s)
+        
+        # Sort by creation date (if we had one, for now use ID or just return)
+        return sessions
 
     # ------------------------------------------------------------------
     # Event streaming

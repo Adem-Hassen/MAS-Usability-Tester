@@ -281,6 +281,13 @@ class PersonaRunner:
         with PlaywrightEngine(self.persona.persona_id) as engine:
             engine.open(sandbox_path, storage_seed=self.state.get("storage_seed"))
 
+            # Live Preview: Initial state
+            init_screenshot = engine.take_screenshot()
+            logger.info("persona.start", 
+                        persona_id=self.persona.persona_id, 
+                        persona_name=self.persona.name,
+                        screenshot=init_screenshot)
+
             initial_state = engine.get_page_state()
             self._understand_page(initial_state)
             self._init_required_fields(initial_state)
@@ -415,6 +422,17 @@ class PersonaRunner:
                 result = engine.execute_action(action_type, selector, value)
                 self._record_step(step_num, decision, page_state, result)
                 self._update_memory(step_num, action_type, selector, value, result)
+
+                # Live Preview: Capture screenshot after action
+                screenshot = engine.take_screenshot()
+                logger.info("persona.action",
+                            persona_id=self.persona.persona_id,
+                            persona_name=self.persona.name,
+                            step=step_num,
+                            action_type=action_type,
+                            selector=selector,
+                            result="OK" if result.success else "FAILED",
+                            screenshot=screenshot)
 
                 # Inline issue on every step (primary accessibility detection path)
                 if inline_issue:
@@ -677,9 +695,30 @@ class PersonaRunner:
             if last.step_number == step_num:
                 issue_id = last.issue_id
 
+        # Normalize action_type to match Literal in ActionStep schema
+        raw_action = str(decision.get("action_type", "observe")).lower().strip()
+        action_map = {
+            "input":    "type",
+            "type_into": "type",
+            "write":    "type",
+            "enter":    "type",
+            "select":   "click",
+            "press":    "click",
+            "click_on": "click",
+            "look":     "observe",
+            "scan":     "observe",
+            "wait":     "observe",
+            "waiting":  "observe",
+        }
+        action_type = action_map.get(raw_action, raw_action)
+        # Final fallback if still invalid (though ActionStep pydantic would still catch it if it's not in the Literal)
+        valid_actions = ["click", "type", "scroll", "navigate", "observe", "hover"]
+        if action_type not in valid_actions:
+            action_type = "observe"
+
         self.steps.append(ActionStep(
             step_number=step_num,
-            action_type=decision.get("action_type", "observe"),
+            action_type=action_type,  # type: ignore
             target_selector=result.target_selector,
             target_description=decision.get("target_description") or "",
             value=result.value,

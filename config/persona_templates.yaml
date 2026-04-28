@@ -21,8 +21,9 @@ personas:
   # ---------------------------------------------------------------------------
 
   - id: lib_elderly_screen_reader
+    name: "Jhon Doe"
     ui_types: ["*"]
-    name: "Elderly screen reader user"
+    description: "Elderly screen reader user"
     age_range: "65-80"
     technical_skill: "low"
     accessibility_constraints:
@@ -37,8 +38,9 @@ personas:
     latency_tolerance: "low"
 
   - id: lib_keyboard_only_power_user
+    name: "Alex Smith"
     ui_types: ["*"]
-    name: "Keyboard-only power user"
+    description: "Keyboard-only power user"
     age_range: "30-45"
     technical_skill: "high"
     accessibility_constraints:
@@ -47,8 +49,9 @@ personas:
       - "uses Tab, Shift+Tab, Enter, Space, arrow keys"
 
   - id: lib_colorblind_user
+    name: "Camille Williams"
     ui_types: ["*"]
-    name: "Colorblind user (deuteranopia)"
+    description: "Colorblind user (deuteranopia)"
     age_range: "25-40"
     technical_skill: "medium"
     accessibility_constraints:
@@ -58,8 +61,9 @@ personas:
     interaction_style: "exploratory"
 
   - id: lib_non_native_speaker
+    name: "Sophia Brown"
     ui_types: ["*"]
-    name: "Non-native language speaker"
+    description: "Non-native language speaker"
     age_range: "28-50"
     technical_skill: "medium"
     cognitive_limitations:
@@ -70,8 +74,9 @@ personas:
     interaction_style: "cautious"
 
   - id: lib_mobile_user_slow_connection
+    name: "Emily Davis"
     ui_types: ["*"]
-    name: "Mobile user on slow connection"
+    description: "Mobile user on slow connection"
     age_range: "18-35"
     technical_skill: "medium"
     accessibility_constraints:
@@ -88,8 +93,9 @@ personas:
   # ---------------------------------------------------------------------------
 
   - id: lib_first_time_form_user
+    name: "Michael Thompson"
     ui_types: ["login form", "registration form", "checkout form", "contact form", "form"]
-    name: "First-time user — unfamiliar with this form"
+    description: "First-time user — unfamiliar with this form"
     age_range: "40-60"
     technical_skill: "low"
     cognitive_limitations:
@@ -100,8 +106,9 @@ personas:
     interaction_style: "cautious"
 
   - id: lib_impatient_form_user
+    name: "David Rodriguez"
     ui_types: ["login form", "registration form", "checkout form", "contact form", "form"]
-    name: "Impatient returning user"
+    nadescriptionme: "Impatient returning user"
     age_range: "25-35"
     technical_skill: "high"
     cognitive_limitations:
@@ -117,8 +124,9 @@ personas:
   # ---------------------------------------------------------------------------
 
   - id: lib_non_technical_dashboard_user
+    name: "Jessica Martinez"
     ui_types: ["dashboard", "admin panel", "analytics", "reporting"]
-    name: "Non-technical manager reading a dashboard"
+    description: "Non-technical manager reading a dashboard"
     age_range: "45-60"
     technical_skill: "low"
     cognitive_limitations:
@@ -130,8 +138,9 @@ personas:
     interaction_style: "cautious"
 
   - id: lib_data_analyst
+    name: "Chris Thompson"
     ui_types: ["dashboard", "admin panel", "analytics", "reporting"]
-    name: "Data analyst — power user"
+    description: "Data analyst — power user"
     age_range: "28-40"
     technical_skill: "high"
     risk_tolerance: "high"
@@ -142,8 +151,9 @@ personas:
   # ---------------------------------------------------------------------------
 
   - id: lib_anxious_shopper
+    name: "Lisa Anderson"
     ui_types: ["e-commerce", "product page", "checkout", "shopping cart"]
-    name: "Anxious first-time online shopper"
+    description: "Anxious first-time online shopper"
     age_range: "55-70"
     technical_skill: "low"
     cognitive_limitations:
@@ -155,8 +165,9 @@ personas:
     interaction_style: "cautious"
 
   - id: lib_deal_hunter
+    name: "Joshua Wilson"
     ui_types: ["e-commerce", "product page", "checkout", "shopping cart"]
-    name: "Deal-hunting frequent online shopper"
+    description: "Deal-hunting frequent online shopper"
     age_range: "25-40"
     technical_skill: "high"
     cognitive_limitations:
@@ -166,13 +177,11 @@ personas:
     latency_tolerance: "low"
     interaction_style: "impatient"
 
-  # ---------------------------------------------------------------------------
-  # Landing page / marketing personas
-  # ---------------------------------------------------------------------------
 
   - id: lib_skeptical_visitor
+    name: "Sarah Martinez"
     ui_types: ["landing page", "marketing page", "homepage"]
-    name: "Skeptical first-time visitor"
+    description: "Skeptical first-time visitor"
     age_range: "30-50"
     technical_skill: "medium"
     cognitive_limitations:

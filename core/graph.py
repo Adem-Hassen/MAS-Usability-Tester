@@ -44,6 +44,7 @@ def _ctx_to_flat(ctx: PageContext) -> dict:
     """Expand a PageContext into the flat keys the original node functions expect."""
     return {
         "html_source_path":         ctx.html_source_path,
+        "original_html_path":       ctx.original_html_path,
         "html_content":             ctx.html_content,
         "ui_context":               ctx.ui_context,
         "storage_seed":             ctx.storage_seed,
@@ -407,6 +408,7 @@ def _prepare_correction(ctx: PageContext, loop: int) -> PageContext:
 
     return PageContext(
         html_source_path      = tmp.name,
+        original_html_path    = ctx.original_html_path,
         html_content          = patched,
         ui_context            = ctx.ui_context,
         storage_seed          = ctx.storage_seed,

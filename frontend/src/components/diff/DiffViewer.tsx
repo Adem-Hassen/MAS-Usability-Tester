@@ -123,10 +123,9 @@ export default function DiffViewer({ original, fixed, filename }: DiffViewerProp
 
   if (original === fixed) {
     return (
-      <div className="rounded-xl border p-8 text-center"
-           style={{ background: 'var(--bg2)', borderColor: 'var(--border)' }}>
-        <div className="text-2xl mb-2">✓</div>
-        <p className="text-sm" style={{ color: 'var(--text2)' }}>
+      <div className="rounded-none border border-nexus-outline-variant p-8 text-center bg-nexus-surface">
+        <div className="text-2xl mb-2 text-nexus-secondary">✓</div>
+        <p className="text-sm text-nexus-outline">
           No changes — file is identical to original.
         </p>
       </div>
@@ -134,42 +133,40 @@ export default function DiffViewer({ original, fixed, filename }: DiffViewerProp
   }
 
   return (
-    <div className="rounded-xl border overflow-hidden"
-         style={{ background: 'var(--bg2)', borderColor: 'var(--border)' }}>
+    <div className="rounded-none border border-nexus-outline-variant overflow-hidden bg-nexus-surface">
 
       {/* Toolbar */}
-      <div className="flex items-center gap-3 px-4 py-2.5 border-b"
-           style={{ background: 'var(--bg3)', borderColor: 'var(--border)' }}>
+      <div className="flex items-center gap-3 px-4 py-2.5 border-b border-nexus-outline-variant bg-nexus-surface-variant/50">
         {filename && (
-          <span className="text-xs font-mono" style={{ color: 'var(--amber)' }}>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-nexus-primary">
             {filename}
           </span>
         )}
 
-        <div className="flex items-center gap-3 text-xs font-mono ml-2">
-          <span style={{ color: 'var(--ok)' }}>+{added}</span>
-          <span style={{ color: 'var(--danger)' }}>−{removed}</span>
-          <span style={{ color: 'var(--text3)' }}>{changed} changes</span>
+        <div className="flex items-center gap-3 text-[10px] font-mono ml-2">
+          <span className="text-nexus-secondary">+{added}</span>
+          <span className="text-nexus-error">−{removed}</span>
+          <span className="text-nexus-outline">{changed} changes</span>
         </div>
 
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={() => setShowContext(v => !v)}
             className={clsx(
-              'text-xs px-2 py-1 rounded transition-colors',
-              showContext ? 'text-amber-400 bg-amber-400/10' : 'text-zinc-500 hover:text-zinc-300'
+              'text-[10px] font-bold uppercase tracking-wider px-2 py-1 transition-colors',
+              showContext ? 'text-nexus-primary bg-nexus-primary/10' : 'text-nexus-outline hover:text-white'
             )}
           >
             Context
           </button>
-          <div className="flex rounded overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
+          <div className="flex border border-nexus-outline-variant">
             {(['unified', 'split'] as const).map(m => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
                 className={clsx(
-                  'text-xs px-2.5 py-1 capitalize transition-colors',
-                  mode === m ? 'bg-amber-400/15 text-amber-400' : 'text-zinc-500 hover:text-zinc-300'
+                  'text-[10px] font-bold  tracking-wider px-2.5 py-1 capitalize transition-colors',
+                  mode === m ? 'bg-nexus-primary/20 text-nexus-primary' : 'text-nexus-outline hover:text-white'
                 )}
               >
                 {m}
@@ -207,8 +204,7 @@ function UnifiedView({ lines, lineStyle, linePrefix }: {
           if (line.hidden) {
             return isCollapsed ? (
               <tr key={i}>
-                <td colSpan={3} className="py-1 px-4 text-center text-[11px]"
-                    style={{ color: 'var(--text3)', background: 'var(--bg3)' }}>
+                <td colSpan={3} className="py-1 px-4 text-center text-[11px] text-nexus-outline bg-nexus-surface-variant/50">
                   ···
                 </td>
               </tr>
@@ -216,15 +212,13 @@ function UnifiedView({ lines, lineStyle, linePrefix }: {
           }
           return (
             <tr key={i} className={clsx('group', lineStyle[line.kind])}>
-              <td className="w-10 text-right pr-3 select-none py-0.5"
-                  style={{ color: 'var(--text3)', background: 'var(--bg3)' }}>
+              <td className="w-10 text-right pr-3 select-none py-0.5 text-nexus-outline bg-nexus-surface-variant/20">
                 {line.lineNo.left ?? ''}
               </td>
-              <td className="w-10 text-right pr-3 select-none py-0.5"
-                  style={{ color: 'var(--text3)', background: 'var(--bg3)' }}>
+              <td className="w-10 text-right pr-3 select-none py-0.5 text-nexus-outline bg-nexus-surface-variant/20">
                 {line.lineNo.right ?? ''}
               </td>
-              <td className="w-6 text-center select-none py-0.5 font-bold" style={{ color: 'var(--text3)' }}>
+              <td className="w-6 text-center select-none py-0.5 font-bold text-nexus-outline">
                 {linePrefix[line.kind]}
               </td>
               <td className="py-0.5 pr-4 whitespace-pre-wrap break-all leading-5">
@@ -255,16 +249,13 @@ function SplitView({ diff, showContext }: { diff: DiffLine[]; showContext: boole
   };
 
   const renderHalf = (lines: DiffLine[], style: Record<LineKind, string>, side: 'left' | 'right') => (
-    <div className="flex-1 overflow-auto border-r last:border-r-0 font-mono text-xs"
-         style={{ borderColor: 'var(--border)' }}>
-      <div className="px-2 py-1 text-[10px] uppercase tracking-widest font-bold border-b"
-           style={{ color: 'var(--text3)', borderColor: 'var(--border)', background: 'var(--bg3)' }}>
+    <div className="flex-1 overflow-auto border-r border-nexus-outline-variant last:border-r-0 font-mono text-xs">
+      <div className="px-2 py-1 text-[10px] uppercase tracking-widest font-bold border-b border-nexus-outline-variant text-nexus-outline bg-nexus-surface-variant/30">
         {side === 'left' ? 'Original' : 'Fixed'}
       </div>
       {lines.map((line, i) => (
         <div key={i} className={clsx('flex py-0.5', style[line.kind])}>
-          <span className="w-10 text-right pr-3 select-none flex-shrink-0"
-                style={{ color: 'var(--text3)' }}>
+          <span className="w-10 text-right pr-3 select-none flex-shrink-0 text-nexus-outline">
             {side === 'left' ? line.lineNo.left : line.lineNo.right}
           </span>
           <span className="whitespace-pre-wrap break-all leading-5 pr-2">{line.content}</span>
@@ -274,7 +265,7 @@ function SplitView({ diff, showContext }: { diff: DiffLine[]; showContext: boole
   );
 
   return (
-    <div className="flex divide-x" style={{ borderColor: 'var(--border)' }}>
+    <div className="flex divide-x divide-nexus-outline-variant">
       {renderHalf(leftLines, leftStyle, 'left')}
       {renderHalf(rightLines, rightStyle, 'right')}
     </div>

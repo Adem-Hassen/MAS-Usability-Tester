@@ -43,6 +43,50 @@ from monitoring.logger import get_logger
 
 logger = get_logger(__name__)
 
+# --- Lazy/Singleton heavy weights ---
+_EMBEDDING_MODEL = None
+_HDBSCAN_MOD     = None
+
+def _get_embedding_model():
+    global _EMBEDDING_MODEL
+    if _EMBEDDING_MODEL is None:
+        import time
+        start = time.perf_counter()
+        logger.info("clustering.model_loading.start", model="all-MiniLM-L6-v2")
+        
+        try:
+            # Limit torch threads to avoid CPU contention in parallel pipeline
+            import torch
+            torch.set_num_threads(1)
+            
+            from sentence_transformers import SentenceTransformer
+            import logging
+            import warnings
+            
+            # Silence HF noise
+            logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+            logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+            logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
+            warnings.filterwarnings("ignore", message=".*unauthenticated.*", category=UserWarning)
+
+            _EMBEDDING_MODEL = SentenceTransformer(
+                "all-MiniLM-L6-v2", 
+                tokenizer_kwargs={"clean_up_tokenization_spaces": True}
+            )
+            elapsed = time.perf_counter() - start
+            logger.info("clustering.model_loading.done", elapsed_sec=round(elapsed, 2))
+        except Exception as e:
+            logger.error("clustering.model_loading.failed", error=str(e))
+            raise
+    return _EMBEDDING_MODEL
+
+def _get_hdbscan():
+    global _HDBSCAN_MOD
+    if _HDBSCAN_MOD is None:
+        import hdbscan
+        _HDBSCAN_MOD = hdbscan
+    return _HDBSCAN_MOD
+
 # Severity ordering for dominant_severity computation
 _SEV_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 _SEV_ORDER = ["critical", "high", "medium", "low"]
@@ -104,31 +148,17 @@ def _issue_to_text(issue: IssueReport) -> str:
 def _embed_issues(issues: list[IssueReport]) -> np.ndarray:
     """
     Embed all issues using sentence-transformers all-MiniLM-L6-v2.
-    Returns shape (N, embedding_dim).
-
-    Suppresses two known-benign warnings before model load:
-      - HF Hub unauthenticated rate-limit warning (no token needed for public models)
-      - BertModel LOAD REPORT: embeddings.position_ids UNEXPECTED
-        (this key is in the safetensors checkpoint but unused by BertModel — harmless)
+    Uses a global singleton to avoid reload overhead.
     """
-    import logging
-    import warnings
-
-    # Silence HF Hub "unauthenticated" noise and sentence-transformers load report
-    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
-    logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
-    # safetensors / transformers logs the LOAD REPORT at WARNING level
-    logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
-    warnings.filterwarnings(
-        "ignore",
-        message=".*unauthenticated.*",
-        category=UserWarning,
-    )
-
-    from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer("all-MiniLM-L6-v2", tokenizer_kwargs={"clean_up_tokenization_spaces": True})
+    model = _get_embedding_model()
     texts = [_issue_to_text(iss) for iss in issues]
+    
+    import time
+    start = time.perf_counter()
     embeddings = model.encode(texts, show_progress_bar=False, batch_size=32)
+    elapsed = time.perf_counter() - start
+    
+    logger.info("clustering.embedding_done", count=len(issues), elapsed_ms=int(elapsed*1000))
     return np.array(embeddings)
 
 
@@ -138,10 +168,10 @@ def _run_hdbscan(embeddings: np.ndarray, n_issues: int) -> np.ndarray:
     min_cluster_size scales with corpus size but never below 2.
     Returns integer label array; -1 = noise (will become singletons).
     """
-    import hdbscan
+    hdbscan_mod = _get_hdbscan()
     # Tune min_cluster_size: small for few issues, larger for many
     min_cs = max(2, n_issues // 6)
-    clusterer = hdbscan.HDBSCAN(
+    clusterer = hdbscan_mod.HDBSCAN(
         min_cluster_size=min_cs,
         min_samples=1,
         metric="euclidean",

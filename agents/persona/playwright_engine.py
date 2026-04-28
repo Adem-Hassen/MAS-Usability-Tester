@@ -437,6 +437,17 @@ class PlaywrightEngine:
             hidden_sections=hidden_sections,
         )
 
+    def take_screenshot(self) -> str:
+        """Capture a full-page screenshot and return as base64 string."""
+        if not self._page or self._page.is_closed():
+            return ""
+        try:
+            # Use a smaller viewport for faster transmission if needed, but 1280x720 is fine
+            img_bytes = self._page.screenshot(type="jpeg", quality=60)
+            return base64.b64encode(img_bytes).decode("utf-8")
+        except Exception:
+            return ""
+
     def _extract_hidden_sections(self) -> list:
         """
         Find elements that are hidden via display:none but exist in the DOM.

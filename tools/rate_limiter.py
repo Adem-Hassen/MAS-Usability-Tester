@@ -170,6 +170,13 @@ class _KeyState:
         if self._tpm_limit <= 0:
             return
 
+        # Safety guard: if a single request is larger than the entire TPM limit,
+        # we must not loop forever. Cap it to the limit.
+        if estimated_tokens >= self._tpm_limit:
+            logger.warning("rate_limiter.tpm_cap_triggered",
+                           requested=estimated_tokens, limit=self._tpm_limit)
+            estimated_tokens = self._tpm_limit - 1
+
         while True:
             sleep_for = 0.0
             now = time.monotonic()
@@ -190,7 +197,8 @@ class _KeyState:
                 # Guard: deque may be empty if all entries just expired above
                 if self._token_window:
                     oldest_ts = self._token_window[0][0]
-                    sleep_for = max(0.1, 60.0 - (now - oldest_ts) + random.uniform(0, 0.5))
+                    # Sleep until the oldest request expires (which will free up its tokens)
+                    sleep_for = max(0.5, 60.0 - (now - oldest_ts) + random.uniform(0.1, 0.5))
                 else:
                     # All entries expired during eviction — loop back immediately
                     sleep_for = 0.0

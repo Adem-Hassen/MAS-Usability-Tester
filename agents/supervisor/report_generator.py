@@ -41,6 +41,8 @@ def report_generator_node(state: dict) -> dict:
     html_source_path      = state.get("html_source_path", "unknown.html")
     ui_context            = state.get("ui_context", "General web UI")
 
+    original_html_path    = state.get("original_html_path", html_source_path)
+
     sev_breakdown   = _compute_severity_breakdown(verified_issues)
     total_issues    = len(verified_issues)
     resolved_count  = sum(len(vr.issues_resolved)       for vr in verification_results)
@@ -89,6 +91,7 @@ def report_generator_node(state: dict) -> dict:
         report_id=report_id,
         timestamp=datetime.utcnow(),
         html_source_path=html_source_path,
+        original_html_path=original_html_path,
         ui_context=ui_context,
         correction_loop_count=correction_loop_count,
         ui_analysis=ui_analysis,

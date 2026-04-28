@@ -54,6 +54,7 @@ class DiagnosticReport(BaseModel):
     report_id: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     html_source_path: str
+    original_html_path: str = Field(default="", description="The original path before any correction loop mutations")
     ui_context: str
     correction_loop_count: int
 

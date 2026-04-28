@@ -1,7 +1,9 @@
 // src/lib/api.ts
 // API client — supports both legacy /api/sessions and new /api/v1/evaluate endpoints.
 
-const BASE = '/api';
+const BASE = (typeof window !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) 
+  ? `${process.env.NEXT_PUBLIC_API_URL}/api` 
+  : '/api';
 
 // ===========================================================================
 // V1 API (preferred)
@@ -41,7 +43,9 @@ export function streamEvaluate(
   function connect() {
     if (closed) return;
 
-    const url = `${backendUrl}/api/v1/evaluate/${jobId}/stream`;
+    const url = backendUrl.startsWith('http') 
+      ? `${backendUrl}/api/v1/evaluate/${jobId}/stream`
+      : `/api/v1/evaluate/${jobId}/stream`;
     es = new EventSource(url);
 
     // Override Last-Event-ID header by passing it in the URL isn't directly
@@ -126,6 +130,31 @@ export async function healthCheck(): Promise<{ status: string; model: string }> 
 }
 
 
+export async function getHistory(): Promise<any[]> {
+  const res = await fetch(`${BASE}/v1/history`);
+  if (!res.ok) throw new Error(`Failed to fetch history (${res.status})`);
+  return res.json();
+}
+
+/**
+ * Settings
+ */
+export async function getSettings() {
+  const res = await fetch(`${BASE}/v1/settings`);
+  if (!res.ok) throw new Error(`Failed to fetch settings (${res.status})`);
+  return res.json();
+}
+
+export async function updateSettings(settings: Record<string, any>) {
+  const res = await fetch(`${BASE}/v1/settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) throw new Error(`Failed to update settings (${res.status})`);
+  return res.json();
+}
+
 // ===========================================================================
 // Legacy API (backward compatibility)
 // ===========================================================================
@@ -168,6 +197,16 @@ export async function getStatus(sessionId: string) {
 
 export function fixedFileUrl(sessionId: string, filename: string): string {
   return `${BASE}/sessions/${sessionId}/files/${filename}`;
+}
+
+export function originalFileUrl(sessionId: string, filename: string): string {
+  return `${BASE}/sessions/${sessionId}/original/${filename}`;
+}
+
+export async function getFileContent(url: string): Promise<string> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch file content (${res.status})`);
+  return res.text();
 }
 
 export function reportPdfUrl(sessionId: string): string {

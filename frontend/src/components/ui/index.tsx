@@ -1,19 +1,30 @@
 'use client';
 
 // src/components/ui/index.tsx
-// Lightweight design-system primitives aligned to the Nexus token system.
+// Nexus Design System primitives.
 
 import clsx from 'clsx';
 import React from 'react';
 
 // ── Card ──────────────────────────────────────────────────────────────────────
 export function Card({
-  children, className, noPad = false
-}: { children: React.ReactNode; className?: string; noPad?: boolean }) {
+  children, className, noPad = false, variant = 'base', ...props
+}: { 
+  children: React.ReactNode; 
+  className?: string; 
+  noPad?: boolean; 
+  variant?: 'base' | 'elevated';
+  onClick?: () => void;
+} & React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={clsx('rounded-xl border', !noPad && 'p-5', className)}
-      style={{ background: 'var(--bg2)', borderColor: 'var(--border)' }}
+      {...props}
+      className={clsx(
+        'rounded-none border border-nexus-outline-variant transition-all duration-200',
+        variant === 'base' ? 'bg-nexus-surface' : 'bg-nexus-surface-variant',
+        !noPad && 'p-6',
+        className
+      )}
     >
       {children}
     </div>
@@ -25,8 +36,7 @@ export function CardHeader({
 }: { children: React.ReactNode; className?: string }) {
   return (
     <div
-      className={clsx('px-5 py-3 border-b flex items-center gap-3', className)}
-      style={{ borderColor: 'var(--border)' }}
+      className={clsx('px-6 py-4 border-b border-nexus-outline-variant flex items-center justify-between gap-3', className)}
     >
       {children}
     </div>
@@ -34,19 +44,19 @@ export function CardHeader({
 }
 
 export function CardBody({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={clsx('p-5', className)}>{children}</div>;
+  return <div className={clsx('p-6', className)}>{children}</div>;
 }
 
 // ── Badge ─────────────────────────────────────────────────────────────────────
-type BadgeVariant = 'amber' | 'teal' | 'danger' | 'ok' | 'neutral' | 'info';
+type BadgeVariant = 'primary' | 'secondary' | 'tertiary' | 'error' | 'neutral' | 'success';
 
 const BADGE_MAP: Record<BadgeVariant, string> = {
-  amber:   'bg-amber-950/60 text-amber-400 border-amber-800/40',
-  teal:    'bg-teal-950/60  text-teal-400  border-teal-800/40',
-  danger:  'bg-red-950/60   text-red-400   border-red-800/40',
-  ok:      'bg-emerald-950/60 text-emerald-400 border-emerald-800/40',
-  neutral: 'bg-zinc-800/60  text-zinc-400  border-zinc-700/40',
-  info:    'bg-blue-950/60  text-blue-400  border-blue-800/40',
+  primary:   'bg-nexus-primary/10 text-nexus-primary border-nexus-primary/20',
+  secondary: 'bg-nexus-secondary/10 text-nexus-secondary border-nexus-secondary/20',
+  tertiary:  'bg-nexus-tertiary/10 text-nexus-tertiary border-nexus-tertiary/20',
+  error:     'bg-nexus-error/10 text-nexus-error border-nexus-error/20',
+  success:   'bg-nexus-secondary/10 text-nexus-secondary border-nexus-secondary/20',
+  neutral:   'bg-nexus-outline/10 text-nexus-outline border-nexus-outline/20',
 };
 
 export function Badge({
@@ -54,7 +64,7 @@ export function Badge({
 }: { children: React.ReactNode; variant?: BadgeVariant; className?: string }) {
   return (
     <span className={clsx(
-      'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border uppercase tracking-wide',
+      'inline-flex items-center px-3 py-1 rounded-pill text-[10px] font-mono font-bold border uppercase tracking-wider',
       BADGE_MAP[variant], className
     )}>
       {children}
@@ -63,16 +73,19 @@ export function Badge({
 }
 
 // ── Button ────────────────────────────────────────────────────────────────────
-type ButtonVariant = 'primary' | 'ghost' | 'danger';
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+
+const BTN_BASE = 'inline-flex items-center justify-center gap-2 px-6 py-2 rounded-none text-sm font-semibold transition-all duration-200 ease-out disabled:opacity-40 disabled:cursor-not-allowed';
 
 const BTN_MAP: Record<ButtonVariant, string> = {
-  primary: 'bg-amber-500/15 text-amber-300 border-amber-500/30 hover:bg-amber-500/25 hover:border-amber-400/50',
-  ghost:   'bg-transparent text-zinc-400 border-zinc-700 hover:text-zinc-200 hover:border-zinc-600',
-  danger:  'bg-red-950/40 text-red-400 border-red-800/40 hover:bg-red-950/60',
+  primary: 'bg-gradient-to-br from-nexus-primary-container to-nexus-primary text-nexus-primary-on border-none hover:-translate-y-[2px] hover:shadow-[0_0_15px_rgba(196,192,255,0.6)]',
+  secondary: 'bg-transparent text-white border border-nexus-outline-variant hover:bg-nexus-surface-variant',
+  ghost:   'bg-transparent text-nexus-outline hover:text-white hover:bg-nexus-surface-variant',
+  danger:  'bg-nexus-error/10 text-nexus-error border border-nexus-error/20 hover:bg-nexus-error/20',
 };
 
 export function Button({
-  children, variant = 'ghost', onClick, disabled, className, href, download, target
+  children, variant = 'secondary', onClick, disabled, className, href, download, target
 }: {
   children: React.ReactNode;
   variant?: ButtonVariant;
@@ -83,12 +96,7 @@ export function Button({
   download?: boolean | string;
   target?: string;
 }) {
-  const cls = clsx(
-    'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all',
-    BTN_MAP[variant],
-    disabled && 'opacity-40 cursor-not-allowed pointer-events-none',
-    className
-  );
+  const cls = clsx(BTN_BASE, BTN_MAP[variant], className);
 
   if (href) {
     return (
@@ -105,86 +113,65 @@ export function Button({
   );
 }
 
-// ── Spinner ───────────────────────────────────────────────────────────────────
-export function Spinner({ size = 16, color = 'var(--amber)' }: { size?: number; color?: string }) {
+// ── Status Dot ────────────────────────────────────────────────────────────────
+export function StatusDot({ status = 'idle', className }: { status?: 'idle' | 'running' | 'done' | 'error', className?: string }) {
   return (
-    <span
-      className="inline-block rounded-full border-2 animate-spin flex-shrink-0"
-      style={{
-        width: size, height: size,
-        borderColor: `${color}30`,
-        borderTopColor: color,
-      }}
-    />
+    <span className={clsx(
+      'w-2 h-2 rounded-none',
+      status === 'idle' && 'bg-nexus-outline-variant',
+      status === 'running' && 'status-pulse',
+      status === 'done' && 'bg-nexus-secondary',
+      status === 'error' && 'bg-nexus-error',
+      className
+    )} />
   );
 }
 
-// ── EmptyState ────────────────────────────────────────────────────────────────
-export function EmptyState({
-  icon, title, description
-}: { icon: string; title: string; description?: string }) {
+// ── Section Label ─────────────────────────────────────────────────────────────
+export function SectionLabel({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <div className="text-4xl mb-4">{icon}</div>
-      <p className="text-sm font-medium mb-1" style={{ color: 'var(--text2)' }}>{title}</p>
-      {description && (
-        <p className="text-xs max-w-xs" style={{ color: 'var(--text3)' }}>{description}</p>
-      )}
-    </div>
-  );
-}
-
-// ── Tabs ──────────────────────────────────────────────────────────────────────
-export function Tabs({
-  tabs, active, onChange
-}: {
-  tabs: { id: string; label: string; count?: number }[];
-  active: string;
-  onChange: (id: string) => void;
-}) {
-  return (
-    <div className="flex gap-1 rounded-lg p-1" style={{ background: 'var(--surface)' }}>
-      {tabs.map(tab => (
-        <button
-          key={tab.id}
-          onClick={() => onChange(tab.id)}
-          className={clsx(
-            'flex-1 py-1.5 px-3 rounded-md text-sm font-medium transition-all',
-            active === tab.id ? 'text-amber-300 bg-amber-400/10' : 'text-zinc-500 hover:text-zinc-300'
-          )}
-        >
-          {tab.label}
-          {tab.count != null && tab.count > 0 && (
-            <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-zinc-700 text-zinc-300">
-              {tab.count}
-            </span>
-          )}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ── SectionLabel ──────────────────────────────────────────────────────────────
-export function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="text-[10px] font-mono font-semibold uppercase tracking-widest mb-3"
-         style={{ color: 'var(--text3)' }}>
+    <div className={clsx('text-[11px] font-mono font-bold uppercase tracking-[0.15em] text-nexus-outline mb-4', className)}>
       {children}
     </div>
   );
 }
 
-// ── Severity badge ────────────────────────────────────────────────────────────
-import type { Severity } from '@/types';
+// ── Metric Card ───────────────────────────────────────────────────────────────
+export function MetricCard({ 
+  label, value, subtext, trend, variant = 'base' 
+}: { 
+  label: string; 
+  value: string | number; 
+  subtext?: string; 
+  trend?: { value: string; type: 'positive' | 'negative' | 'neutral' };
+  variant?: 'primary' | 'secondary' | 'error' | 'base'
+}) {
+  const accentColor = {
+    primary: 'border-t-nexus-primary',
+    secondary: 'border-t-nexus-secondary',
+    error: 'border-t-nexus-error',
+    base: 'border-t-nexus-outline-variant'
+  }[variant];
 
-const SEV_VARIANT: Record<Severity, BadgeVariant> = {
-  critical: 'danger',
-  high:     'amber',
-  medium:   'info',
-  low:      'neutral',
-};
-
-export function SeverityBadge({ severity }: { severity: Severity }) {
-  return <Badge variant={SEV_VARIANT[severity]}>{severity}</Badge>;
+  return (
+    <Card className={clsx('flex flex-col gap-1 border-t-2', accentColor)}>
+      <SectionLabel className="mb-1">{label}</SectionLabel>
+      <div className="text-3xl font-syne font-bold">{value}</div>
+      {(subtext || trend) && (
+        <div className="flex items-center gap-2 mt-2">
+          {trend && (
+            <span className={clsx(
+              'text-[10px] font-bold px-1.5 py-0.5 rounded-none',
+              trend.type === 'positive' && 'bg-nexus-secondary/10 text-nexus-secondary',
+              trend.type === 'negative' && 'bg-nexus-error/10 text-nexus-error',
+              trend.type === 'neutral' && 'bg-nexus-outline/10 text-nexus-outline',
+            )}>
+              {trend.value}
+            </span>
+          )}
+          {subtext && <span className="text-[10px] text-nexus-outline uppercase font-bold tracking-tight">{subtext}</span>}
+        </div>
+      )}
+    </Card>
+  );
 }

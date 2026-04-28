@@ -128,10 +128,10 @@ class Settings(BaseSettings):
         )
     )
     llm_tpm_limit: int = Field(
-        6000, ge=0,
+        30000, ge=0,
         description=(
             "Tokens-per-minute limit for the sliding-window TPM tracker. "
-            "Groq free tier: 6000 TPM for most models. Set 0 to disable."
+            "Groq free tier: 6000-30000 TPM depending on model. Set 0 to disable."
         )
     )
     llm_inter_request_delay_seconds: float = Field(

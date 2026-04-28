@@ -234,6 +234,21 @@ async def download_patched_zip(job_id: str):
     )
 
 
+@app.get("/api/v1/history")
+async def get_history():
+    """Return all past evaluation sessions."""
+    sessions = store.list_all()
+    return [
+        {
+            "job_id": s.session_id,
+            "status": s.status.value,
+            "score": s.results.get("score_avg", 0) if s.results else 0,
+            "files": len(s.input_paths),
+            "created_at": s.created_at.isoformat() if hasattr(s, 'created_at') else None,
+        }
+        for s in sessions
+    ]
+
 @app.get("/api/v1/health")
 async def health_v1():
     """Health check with model and token info."""
@@ -372,6 +387,16 @@ async def download_fixed_file(session_id: str, filename: str):
     return FileResponse(path, filename=filename, media_type="text/html")
 
 
+@app.get("/api/sessions/{session_id}/original/{filename}")
+async def get_original_file(session_id: str, filename: str):
+    session = _get_session(session_id)
+    # Check exact match or match without extension
+    for p in session.input_paths:
+        if p.name == filename or p.stem == filename:
+            return FileResponse(p, filename=p.name, media_type="text/html")
+    raise HTTPException(404, f"Original file '{filename}' not found.")
+
+
 @app.get("/api/sessions/{session_id}/report.pdf")
 async def download_report(session_id: str):
     session = _get_session(session_id)
@@ -383,6 +408,35 @@ async def download_report(session_id: str):
     return FileResponse(pdf_path, filename=f"nexus_report_{session_id}.pdf",
                         media_type="application/pdf")
 
+
+@app.get("/api/v1/settings")
+async def get_settings():
+    """Retrieve current system settings (masking API keys)."""
+    from config.settings import settings as s
+    return {
+        "supervisor_model": s.supervisor_llm_model,
+        "persona_model": s.persona_llm_model,
+        "recommender_model": s.recommender_llm_model,
+        "max_personas": s.max_num_personas,
+        "max_steps": s.persona_max_steps,
+        "headless": s.persona_headless,
+        "save_traces": s.save_action_traces,
+        # Mask keys for security
+        "has_supervisor_key": bool(s.supervisor_api_key),
+        "has_persona_key": bool(s.persona_api_key),
+    }
+
+@app.post("/api/v1/settings")
+async def update_settings(payload: dict):
+    """Update system settings (limited set for now)."""
+    from config.settings import settings as s
+    if "max_personas" in payload:
+        s.max_num_personas = payload["max_personas"]
+    if "max_steps" in payload:
+        s.persona_max_steps = payload["max_steps"]
+    if "headless" in payload:
+        s.persona_headless = payload["headless"]
+    return {"status": "updated"}
 
 @app.get("/api/health")
 async def health():

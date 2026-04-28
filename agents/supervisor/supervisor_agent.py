@@ -140,6 +140,7 @@ def supervisor_node(state: dict) -> dict:
 
         return PageContext(
             html_source_path=html_path,
+            original_html_path=html_path,
             html_content=html_content,
             ui_context=ui_context,
             storage_seed=storage_seed,

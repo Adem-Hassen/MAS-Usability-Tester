@@ -1,376 +1,212 @@
 'use client';
 
-// src/components/pipeline/OutputTabs.tsx
-// Right panel — tabbed output with Issues, Patches, Results, and Metrics sub-tabs.
-
-import { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
+import { Card, SectionLabel, Badge, Button } from '@/components/ui';
+import { Layout, AlertCircle, Zap, FileJson, Download, FileText } from 'lucide-react';
 import clsx from 'clsx';
-import dynamic from 'next/dynamic';
-import { Tabs, Badge, SectionLabel, SeverityBadge, Button, Spinner, EmptyState } from '@/components/ui';
-import { fixedFileUrl, reportPdfUrl, reportUrl, downloadUrl } from '@/lib/api';
-import type { Issue, Patch, PageResult, SessionResults, Severity } from '@/types';
+import IssuesPanel from '@/components/pipeline/IssuesPanel';
+import PatchesPanel from '@/components/pipeline/PatchesPanel';
+import DiffViewer from '@/components/diff/DiffViewer';
+import { getFileContent, originalFileUrl, fixedFileUrl } from '@/lib/api';
 
-const DiffViewer  = dynamic(() => import('@/components/diff/DiffViewer'),  { ssr: false });
-const HtmlPreview = dynamic(() => import('@/components/preview/HtmlPreview'), { ssr: false });
-
-// ── Score Ring ────────────────────────────────────────────────────────────────
-function ScoreRing({ score }: { score: number }) {
-  const r    = 34;
-  const circ = 2 * Math.PI * r;
-  const dash = Math.max(0, Math.min(1, score / 10)) * circ;
-  const col  = score >= 7 ? '#4a9a6a' : score >= 4 ? '#d4844a' : '#e05a4a';
-  return (
-    <div className="relative inline-flex items-center justify-center flex-shrink-0">
-      <svg width="80" height="80" viewBox="0 0 80 80">
-        <circle cx="40" cy="40" r={r} fill="none" stroke="#2d2d29" strokeWidth="5.5" />
-        <circle cx="40" cy="40" r={r} fill="none" stroke={col} strokeWidth="5.5"
-          strokeDasharray={`${dash} ${circ - dash}`} strokeLinecap="round"
-          transform="rotate(-90 40 40)"
-          style={{ transition: 'stroke-dasharray 1s cubic-bezier(.4,0,.2,1)' }} />
-      </svg>
-      <div className="absolute text-center leading-tight">
-        <div className="font-display font-bold text-lg leading-none" style={{ color: col }}>
-          {score.toFixed(1)}
-        </div>
-        <div className="text-[9px] font-mono" style={{ color: 'var(--text3)' }}>/10</div>
-      </div>
-    </div>
-  );
+interface OutputTabsProps {
+  issues: any[];
+  patches: any[];
+  results: any;
+  sessionId: string | null;
+  status: string;
+  reportUrl?: string;
+  downloadUrl?: string;
+  pageFilter: string | null;
 }
 
-// ── Issues Panel ──────────────────────────────────────────────────────────────
-function IssuesPanel({ issues }: { issues: Issue[] }) {
-  const bySeverity = ['critical', 'high', 'medium', 'low'] as Severity[];
-  return (
-    <div className="space-y-2">
-      {issues.length === 0 && (
-        <EmptyState icon="🔍" title="No issues detected yet"
-          description="Issues will appear here as personas simulate interactions." />
-      )}
-      {bySeverity.flatMap(sev =>
-        issues
-          .filter(i => i.severity === sev)
-          .map((issue, i) => (
-            <div key={issue.issue_id || i}
-                 className="rounded-xl border p-4 animate-slide-up hover:border-amber-400/15 transition-colors"
-                 style={{ background: 'var(--bg2)', borderColor: 'var(--border)' }}>
-              <div className="flex items-start gap-3">
-                <SeverityBadge severity={issue.severity} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium mb-0.5" style={{ color: 'var(--text)' }}>
-                    {issue.title}
-                  </div>
-                  <div className="text-xs leading-relaxed mb-2" style={{ color: 'var(--text2)' }}>
-                    {issue.description}
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant="neutral">{issue.category}</Badge>
-                    {issue.page && (
-                      <span className="text-[10px] font-mono" style={{ color: 'var(--text3)' }}>
-                        {issue.page}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))
-      )}
-    </div>
-  );
-}
-
-// ── Patches Panel ─────────────────────────────────────────────────────────────
-function PatchesPanel({ patches }: { patches: Patch[] }) {
-  const typeMap: Record<string, 'teal' | 'info' | 'amber'> = {
-    html_attribute: 'teal',
-    css_snippet:    'info',
-    js_snippet:     'amber',
-  };
-  return (
-    <div className="space-y-2">
-      {patches.length === 0 && (
-        <EmptyState icon="🔧" title="No patches yet"
-          description="Patches will appear here as fixes are applied." />
-      )}
-      {patches.map((patch, i) => (
-        <div key={patch.patch_id || i}
-             className="rounded-xl border p-4 animate-slide-up"
-             style={{ background: 'var(--bg2)', borderColor: 'var(--border)' }}>
-          <div className="flex items-start gap-3">
-            <Badge variant={typeMap[patch.patch_type] ?? 'neutral'}>
-              {patch.patch_type?.replace(/_/g, ' ')}
-            </Badge>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs font-mono mb-1" style={{ color: 'var(--amber)' }}>
-                {patch.target}
-              </div>
-              <div className="text-sm" style={{ color: 'var(--text2)' }}>
-                {patch.description}
-              </div>
-              {patch.page && (
-                <div className="mt-1 text-[10px] font-mono" style={{ color: 'var(--text3)' }}>
-                  {patch.page}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Page Result Card ──────────────────────────────────────────────────────────
-function PageResultCard({
-  result, sessionId, originalHtml
-}: {
-  result: PageResult;
-  sessionId: string;
-  originalHtml?: string;
-}) {
-  const [tab, setTab]           = useState<'summary' | 'diff' | 'preview'>('summary');
+function PreviewPanel({ results, sessionId, pageFilter }: { results: any, sessionId: string, pageFilter: string | null }) {
+  const [originalHtml, setOriginalHtml] = useState<string | null>(null);
   const [fixedHtml, setFixedHtml] = useState<string | null>(null);
-  const [loadingFixed, setLoadingFixed] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const hasFix = !!result.fixed_file;
+  // Use the first page if no filter is active
+  const activePage = pageFilter || (results?.pages?.[0]?.page);
 
-  useEffect(() => {
-    if ((tab === 'diff' || tab === 'preview') && hasFix && !fixedHtml) {
-      setLoadingFixed(true);
-      fetch(fixedFileUrl(sessionId, result.fixed_file!))
-        .then(r => r.text())
-        .then(setFixedHtml)
-        .catch(() => setFixedHtml('<!-- Could not load fixed HTML -->'))
-        .finally(() => setLoadingFixed(false));
+  React.useEffect(() => {
+    if (!activePage || !sessionId || !results) return;
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const pageData = results.pages.find((p: any) => p.page === activePage) || results.pages[0];
+        if (!pageData) throw new Error("Page results not found");
+
+        const originalUrl = originalFileUrl(sessionId, pageData.original_file || activePage);
+        const fixedUrl = fixedFileUrl(sessionId, pageData.fixed_file);
+
+        console.log(`[PreviewPanel] Fetching: ${originalUrl} and ${fixedUrl}`);
+
+        const [orig, fixed] = await Promise.all([
+          getFileContent(originalUrl),
+          getFileContent(fixedUrl)
+        ]);
+
+        setOriginalHtml(orig);
+        setFixedHtml(fixed);
+      } catch (err: any) {
+        setError(err.message || "Failed to load comparison data");
+      } finally {
+        setLoading(false);
+      }
     }
-  }, [tab, hasFix, fixedHtml, sessionId, result.fixed_file]);
 
-  const tabs = [
-    { id: 'summary', label: 'Summary' },
-    ...(hasFix ? [
-      { id: 'diff',    label: 'Diff' },
-      { id: 'preview', label: 'Preview' },
-    ] : []),
-  ];
+    load();
+  }, [activePage, sessionId, results]);
 
-  return (
-    <div className="rounded-xl border overflow-hidden animate-slide-up"
-         style={{ background: 'var(--bg2)', borderColor: 'var(--border)' }}>
-      {/* Header */}
-      <div className="flex items-center gap-4 px-5 py-4 border-b"
-           style={{ background: 'var(--bg3)', borderColor: 'var(--border)' }}>
-        {result.overall_score != null && !result.error && (
-          <ScoreRing score={result.overall_score} />
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="font-display font-bold text-xl tracking-tight mb-1"
-               style={{ color: 'var(--text)' }}>
-            {result.page}
-          </div>
-          {result.error ? (
-            <span className="text-sm" style={{ color: 'var(--danger)' }}>
-              ⚠ {result.error}
-            </span>
-          ) : (
-            <div className="flex items-center gap-4 text-sm" style={{ color: 'var(--text2)' }}>
-              <span>{result.total_issues ?? 0} issues detected</span>
-              <span style={{ color: 'var(--text3)' }}>·</span>
-              <span>{result.patches_applied ?? 0} patches applied</span>
-            </div>
-          )}
-        </div>
-        <div className="flex gap-2 flex-shrink-0">
-          {result.fixed_file && (
-            <Button variant="ghost" href={fixedFileUrl(sessionId, result.fixed_file)} download>
-              ↓ Fixed HTML
-            </Button>
-          )}
+  if (!results) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center gap-4 text-nexus-outline">
+        <Layout size={48} strokeWidth={1} />
+        <div>
+          <div className="text-sm font-bold uppercase tracking-widest text-white mb-2">Visual Regression</div>
+          <p className="text-xs max-w-[240px]">Live comparison preview will be available after the verification stage.</p>
         </div>
       </div>
+    );
+  }
 
-      {/* Tab bar */}
-      {tabs.length > 1 && (
-        <div className="px-5 pt-4">
-          <Tabs tabs={tabs} active={tab} onChange={t => setTab(t as 'summary' | 'diff' | 'preview')} />
-        </div>
-      )}
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-nexus-outline animate-pulse text-xs font-bold uppercase tracking-widest">Loading comparison...</div>
+      </div>
+    );
+  }
 
-      {/* Tab content */}
-      <div className="p-5">
-        {tab === 'summary' && (
-          <div className="space-y-4">
-            {result.summary && (
-              <p className="text-sm leading-relaxed" style={{ color: 'var(--text2)' }}>
-                {result.summary}
-              </p>
-            )}
-            {result.recommendations && result.recommendations.length > 0 && (
-              <div>
-                <SectionLabel>Top Recommendations</SectionLabel>
-                <ol className="space-y-2">
-                  {result.recommendations.map((rec, i) => (
-                    <li key={i} className="flex gap-3 text-sm">
-                      <span className="font-mono text-amber-500 flex-shrink-0 w-5 text-right">
-                        {i + 1}.
-                      </span>
-                      <span style={{ color: 'var(--text2)' }}>{rec}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            )}
-            {!result.summary && !result.recommendations?.length && !result.error && (
-              <EmptyState icon="📋" title="No summary available" />
-            )}
-          </div>
-        )}
+  if (error) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-nexus-error text-center p-4">
+        <AlertCircle size={32} className="mb-2" />
+        <div className="text-sm font-bold uppercase mb-1">Error Loading Preview</div>
+        <p className="text-xs opacity-70">{error}</p>
+      </div>
+    );
+  }
 
-        {tab === 'diff' && (
-          loadingFixed ? (
-            <div className="flex items-center justify-center py-16 gap-3"
-                 style={{ color: 'var(--text3)' }}>
-              <Spinner /> Loading diff…
-            </div>
-          ) : fixedHtml && originalHtml ? (
-            <DiffViewer original={originalHtml} fixed={fixedHtml} filename={result.fixed_file} />
-          ) : (
-            <EmptyState icon="📄" title="Original file not available for diff"
-              description="Diff requires the original HTML to be loaded client-side." />
-          )
-        )}
+  if (!originalHtml || !fixedHtml) return null;
 
-        {tab === 'preview' && (
-          loadingFixed ? (
-            <div className="flex items-center justify-center py-16 gap-3"
-                 style={{ color: 'var(--text3)' }}>
-              <Spinner /> Loading preview…
-            </div>
-          ) : fixedHtml ? (
-            <HtmlPreview
-              original={originalHtml ?? fixedHtml}
-              fixed={fixedHtml}
-              filename={result.fixed_file}
-              fixedFileUrl={fixedFileUrl(sessionId, result.fixed_file!)}
-            />
-          ) : (
-            <EmptyState icon="🖼" title="Could not load preview" />
-          )
-        )}
+  return (
+    <div className="space-y-4 h-full flex flex-col">
+      <SectionLabel>Live Comparison — {activePage}</SectionLabel>
+      <div className="flex-1 min-h-0">
+        <DiffViewer original={originalHtml} fixed={fixedHtml} filename={activePage} />
       </div>
     </div>
   );
-}
-
-// ── Main OutputTabs Component ─────────────────────────────────────────────────
-export interface OutputTabsProps {
-  issues:         Issue[];
-  patches:        Patch[];
-  results:        SessionResults | null;
-  sessionId:      string | null;
-  uploadedFiles:  Map<string, string>;
-  status:         string;
-  error:          string | null;
-  errorStage:     string | null;
-  reportUrl?:     string;
-  downloadUrl?:   string;
-  onFetchResults: () => void;
-  pageFilter:     string | null;
 }
 
 export default function OutputTabs({
-  issues, patches, results, sessionId, uploadedFiles,
-  status, error, errorStage, reportUrl: rUrl, downloadUrl: dUrl,
-  onFetchResults, pageFilter,
+  issues,
+  patches,
+  results,
+  sessionId,
+  status,
+  reportUrl,
+  downloadUrl,
+  pageFilter,
 }: OutputTabsProps) {
-  const [activeTab, setActiveTab] = useState('progress');
+  const [activeTab, setActiveTab] = useState('issues');
 
-  const isDone   = status === 'done';
-  const isFailed = status === 'failed';
-
-  // Auto-switch to results when done
-  useEffect(() => {
-    if (isDone) {
-      setActiveTab('results');
-      if (!results) onFetchResults();
-    }
-  }, [isDone]);
-
-  const filterData = <T extends { page: string }>(arr: T[]) =>
-    pageFilter ? arr.filter(x => x.page === pageFilter) : arr;
+  const filteredIssues = pageFilter ? issues.filter(i => i.page === pageFilter) : issues;
+  const filteredPatches = pageFilter ? patches.filter(p => p.page === pageFilter) : patches;
 
   const tabs = [
-    { id: 'progress', label: 'Progress',  count: 0 },
-    { id: 'issues',   label: 'Issues',    count: issues.length },
-    { id: 'patches',  label: 'Patches',   count: patches.length },
-    { id: 'results',  label: 'Results',   count: results?.pages.length ?? 0 },
+    { id: 'issues', label: 'Issues', icon: AlertCircle, count: filteredIssues.length, color: 'text-nexus-error' },
+    { id: 'patches', label: 'Patches', icon: Zap, count: filteredPatches.length, color: 'text-nexus-secondary' },
+    { id: 'preview', label: 'Preview', icon: Layout, count: 0, color: 'text-nexus-primary' },
+    { id: 'output', label: 'Export', icon: FileJson, count: 0, color: 'text-nexus-outline' },
   ];
 
   return (
-    <div className="space-y-4">
-      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+    <div className="flex flex-col h-full bg-[#0E0F11] border-l border-nexus-outline-variant">
+      {/* Tab Headers */}
+      <div className="flex border-b border-nexus-outline-variant">
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={clsx(
+                "flex-1 flex flex-col items-center justify-center py-4 px-2 gap-1 border-b-2 transition-all relative",
+                isActive ? "bg-nexus-primary/5 border-nexus-primary text-white" : "border-transparent text-nexus-outline hover:text-white hover:bg-white/5"
+              )}
+            >
+              <tab.icon size={16} className={clsx(isActive ? tab.color : "text-nexus-outline")} />
+              <span className="text-[10px] font-bold uppercase tracking-widest">{tab.label}</span>
+              {tab.count > 0 && (
+                <span className={clsx(
+                  "absolute top-2 right-2 text-[8px] px-1 font-bold rounded-none",
+                  isActive ? "bg-nexus-primary text-nexus-bg" : "bg-nexus-outline-variant text-nexus-outline"
+                )}>
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
 
-      {/* Progress tab — show AgentStream */}
-      {activeTab === 'progress' && (
-        <div className="text-sm text-center py-8" style={{ color: 'var(--text3)' }}>
-          {/* AgentStream is rendered separately in the main layout */}
-          <p>Logs are displayed in the Agent Stream panel →</p>
-        </div>
-      )}
+      {/* Content Area */}
+      <div className="flex-1 overflow-y-auto p-6">
+        {activeTab === 'issues' && <IssuesPanel issues={filteredIssues} />}
+        {activeTab === 'patches' && <PatchesPanel patches={filteredPatches} />}
+        {activeTab === 'preview' && (
+          <PreviewPanel results={results} sessionId={sessionId || ''} pageFilter={pageFilter} />
+        )}
+        {activeTab === 'output' && (
+          <div className="space-y-6">
+            <SectionLabel>Export Results</SectionLabel>
+            <div className="space-y-3">
+              <Card variant="elevated" className="flex items-center justify-between p-4 group cursor-pointer hover:border-nexus-primary/40">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-nexus-surface border border-nexus-outline-variant flex items-center justify-center text-nexus-secondary">
+                    <FileText size={20} />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold uppercase tracking-wider">Accessibility Report</div>
+                    <div className="text-[10px] text-nexus-outline font-mono">PDF format • Comprehensive</div>
+                  </div>
+                </div>
+                {reportUrl ? (
+                  <Button variant="ghost" className="!p-2" href={reportUrl} download>
+                    <Download size={16} />
+                  </Button>
+                ) : (
+                  <Badge variant="neutral">Pending</Badge>
+                )}
+              </Card>
 
-      {/* Issues tab */}
-      {activeTab === 'issues' && (
-        <IssuesPanel issues={filterData(issues)} />
-      )}
-
-      {/* Patches tab */}
-      {activeTab === 'patches' && (
-        <PatchesPanel patches={filterData(patches)} />
-      )}
-
-      {/* Results tab */}
-      {activeTab === 'results' && (
-        <div className="space-y-6">
-          {isFailed && (
-            <div className="rounded-xl border p-6 text-center"
-                 style={{ background: 'rgba(224,90,74,0.06)',
-                          borderColor: 'rgba(224,90,74,0.2)' }}>
-              <div className="text-3xl mb-3">⚠</div>
-              <p className="text-sm font-medium mb-1"
-                 style={{ color: 'var(--danger)' }}>
-                Pipeline failed{errorStage ? ` at ${errorStage}` : ''}
-              </p>
-              <p className="text-xs" style={{ color: 'var(--text2)' }}>{error}</p>
+              <Card variant="elevated" className="flex items-center justify-between p-4 group cursor-pointer hover:border-nexus-primary/40">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-nexus-surface border border-nexus-outline-variant flex items-center justify-center text-nexus-primary">
+                    <FileJson size={20} />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold uppercase tracking-wider">Patch Artifacts</div>
+                    <div className="text-[10px] text-nexus-outline font-mono">ZIP archive • Source Code</div>
+                  </div>
+                </div>
+                {downloadUrl ? (
+                  <Button variant="ghost" className="!p-2" href={downloadUrl} download>
+                    <Download size={16} />
+                  </Button>
+                ) : (
+                  <Badge variant="neutral">Pending</Badge>
+                )}
+              </Card>
             </div>
-          )}
-
-          {/* Download buttons */}
-          {isDone && sessionId && (
-            <div className="flex items-center gap-3">
-              {rUrl && <Button variant="primary" href={rUrl} download>↓ PDF Report</Button>}
-              {dUrl && <Button variant="ghost" href={dUrl} download>↓ Download ZIP</Button>}
-            </div>
-          )}
-
-          {!results && isDone && (
-            <div className="flex items-center justify-center py-16 gap-3"
-                 style={{ color: 'var(--text3)' }}>
-              <Spinner /> Loading results…
-            </div>
-          )}
-          {results?.pages
-            .filter(p => !pageFilter || p.page === pageFilter)
-            .map(page => (
-              <PageResultCard
-                key={page.page}
-                result={page}
-                sessionId={sessionId!}
-                originalHtml={uploadedFiles.get(page.page)}
-              />
-            ))
-          }
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

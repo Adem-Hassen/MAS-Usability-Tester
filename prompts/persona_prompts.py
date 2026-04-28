@@ -27,7 +27,7 @@ Output ONLY valid JSON — no explanation, no markdown:
     {{
       "description": "human-readable description of what you can do",
       "selector": "CSS selector",
-      "action_type": "click | type | select"
+      "action_type": "click | type"
     }}
   ],
   "relevant_to_goal": "which section or element is most relevant to the task goal, and why",
@@ -155,7 +155,7 @@ Output ONLY valid JSON — no explanation, no markdown:
   "action_type": "click | type | scroll | observe",
   "target_selector": "CSS selector or null",
   "target_description": "human-readable description of the target element",
-  "value": "text to type, scroll direction, or null",
+  "value": "text to type, scroll direction (up/down), or null",
   "reasoning": "why you chose this action as this persona",
   "page_state_summary": "brief description of what you currently see",
   "stop_signal": null | "goal_achieved" | "dead_end",
