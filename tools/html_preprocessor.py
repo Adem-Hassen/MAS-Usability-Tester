@@ -1,34 +1,4 @@
 # tools/html_preprocessor.py
-"""
-HTML pre-processor for the Supervisor batch analysis step.
-
-Problem: sending full HTML to the LLM wastes tokens on content that adds
-no value to UI analysis — inline <script> bodies, inline <style> blocks
-(which can be huge), HTML comments, and base64 data URIs.
-
-This module strips all of that noise while preserving everything the LLM
-needs to understand the UI structure and detect accessibility issues:
-  ✓ All HTML tags and their attributes
-  ✓ Visible text content
-  ✓ ARIA attributes, roles, labels
-  ✓ Form structure (inputs, labels, fieldsets)
-  ✓ Navigation structure
-  ✗ <script> body content (replaced with a short placeholder)
-  ✗ <style> body content (replaced with a short placeholder)
-  ✗ HTML comments
-  ✗ base64 data URIs (src="data:..." → src="[base64-omitted]")
-  ✗ Excessively long attribute values (> 200 chars, e.g. SVG paths)
-
-Typical reduction: 60–80% fewer tokens for a page with inline JS/CSS.
-Speed-up: proportional to token reduction × LLM processing time.
-
-Public API
-----------
-    stripped = preprocess_for_analysis(html_content, max_chars=12_000)
-
-    # or use the smart_truncate drop-in replacement:
-    stripped = smart_truncate_for_analysis(html_content, max_chars)
-"""
 
 from __future__ import annotations
 

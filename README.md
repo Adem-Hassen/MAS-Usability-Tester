@@ -1,200 +1,139 @@
-#MAS Usability Tester
+# MAS Usability Tester
 
-A full-stack web application that wraps the MAS-Usability-Tester pipeline behind
-a FastAPI backend and Next.js frontend, providing real-time evaluation feedback,
-issue detection, patch previews, and PDF report download.
+A next-generation Multi-Agent System (MAS) for automated usability and accessibility evaluation. It leverages **LangGraph**, **Groq (Llama 3.3)**, and **Playwright** to simulate human interactions, identify friction points, and automatically apply high-quality UI patches.
 
----
-
-## Architecture
-
-```
-
-MAS-Usability-Tester/
-    ├── backend/
-    │     ├── main.py            ← FastAPI app + all REST/SSE endpoints
-    │     ├── session_store.py   ← In-memory session store with SSE pub/sub queues
-    │     ├── pipeline_runner.py ← Bridges sessions to MAS pipeline (simulation fallback)
-    │     └── requirements.txt
-    └── frontend/
-      ├── src/
-    │     ├── app/
-    │     │   ├── layout.tsx    ← Root layout
-    │     │   ├── page.tsx      ← Main dashboard (upload + live view + results)
-    │     │   └── globals.css   ← Design tokens + global styles
-    │     ├── hooks/
-    │     │   └── usePipeline.ts ← Central state machine + SSE consumer
-    │     ├── lib/
-    │     │   └── api.ts        ← Typed API client
-    │     └── types/
-    │       └── index.ts      ← Shared TypeScript types
-        ├── next.config.js
-        ├── tailwind.config.js
-        └── package.json
-    ├── agents/
-    │   ├── persona/
-    │   │   ├── agent_sandbox.py
-    │   │   ├── persona_agent.py
-    │   │   └── playwright_engine.py
-    │   └── supervisor/
-    │       └── supervisor_agent.py
-    |       └── patch_applicator.py
-    |       └── report_generator.py
-    |       └── verficiation_loop.py
-    │   └── recommender/
-    │       └──recommender_agent.py
-    |       └── conflict_resolver.py       
-    ├── cofig/
-    │   ├── logging_config.py
-    │   ├── persona_templates.yaml
-    │   └── settings.py
-    ├── core/
-    │   └── state.py
-    │   └── graph.py
-    ├── monitoring/
-    │   └── logger.py
-    ├── prompts/
-    │   ├── persona_prompts.py
-    │   ├── recommender_prompts.py
-    │   └── supervisor_prompts.py
-    ├── schemas/
-    │   ├── issue_schema.py
-    │   ├── patch_schema.py
-    │   ├── persona_schema.py
-    │   └── report_schema.py
-    ├── tools/
-    │   └── analysis/
-    │       └── cluster_engine.py
-    |   └── rate_limiter.py
-    ├── .env
-    ├── .gitignore
-    ├── main.py
-    └── requirements.txt
-```
-
-### Data flow
-
-```
-User uploads HTML files
-        │
-        ▼
-POST /api/sessions          → session created, files saved to disk
-POST /api/sessions/{id}/run → pipeline triggered in background thread
-GET  /api/sessions/{id}/stream → SSE: progress / step / issue / patch / done events
-GET  /api/sessions/{id}/results → final JSON results
-GET  /api/sessions/{id}/files/{name} → download fixed HTML
-GET  /api/sessions/{id}/report.pdf   → download PDF report
-```
-
-### SSE event types
-
-| kind       | key fields                                        |
-|------------|---------------------------------------------------|
-| `progress` | `value` (0–100), `label`                          |
-| `step`     | `step`, `status`, `page`, `page_num`, `label`     |
-| `log`      | `level`, `message`                                |
-| `issue`    | `issue_id`, `title`, `severity`, `category`, `description`, `page` |
-| `patch`    | `patch_id`, `target`, `description`, `patch_type`, `page` |
-| `done`     | `pages_done`, `has_pdf`                           |
-| `error`    | `message`, `trace`                                |
+The system features the **Nexus Design System**, a premium dark-mode dashboard providing real-time telemetry of agent actions, live previews, and detailed diagnostic reports.
 
 ---
 
-## Quick Start
+## 🏗 System Architecture
 
-### 1. Backend
+The MAS Usability Tester is built on a **Massively Parallel Multi-Agent Orchestration** engine. It treats each page as an independent branch in a directed acyclic graph (DAG), executed via LangGraph.
 
+### Core Architecture Flow
+```mermaid
+graph TD
+    User((User)) -->|Upload HTML| API[FastAPI /api/v1/evaluate]
+    API -->|Start Job| Supervisor[Supervisor Node]
+    
+    subgraph "Per-Page Parallel Pipeline"
+        Supervisor -->|Fan-out| PagePipe[Page Pipeline Node]
+        PagePipe -->|Spawn| Personas[Persona Swarm]
+        Personas -->|Simulate Interactions| Playwright[Playwright Engine]
+        Playwright -->|Generate Traces| TraceVer[Trace Verification]
+        TraceVer -->|Valid Issues| Clustering[Issue Clustering Engine]
+        Clustering -->|Grouped Issues| RecSwarm[Recommender Swarm]
+        RecSwarm -->|Proposed Patches| ConflictRes[Conflict Resolver]
+        ConflictRes -->|Unified Patch Set| Applicator[Patch Applicator]
+        Applicator -->|Fixed HTML| VerifLoop[Verification Loop]
+    end
+    
+    VerifLoop -->|Corrected Result| Report[Report Generator]
+    Report -->|PDF/JSON| Storage[Session Data Store]
+    Storage -->|SSE| Frontend[Next.js Nexus UI]
+```
+
+---
+
+## 🤖 Agent Breakdown
+
+| Agent | Responsibility | Logic / Model |
+| :--- | :--- | :--- |
+| **Supervisor** | Orchestrator. Analyzes UI structure and generates targeted Personas. | Llama 3.3 70B |
+| **Persona** | Simulated user. Navigates the UI to achieve goals, observing friction/a11y issues. | Llama 3.1 8B |
+| **Clusterer** | Grouping engine. Uses HDBSCAN + sentence-embeddings to deduplicate findings. | NLP Models |
+| **Recommender** | Specialist. Generates HTML/CSS/JS patches based on issue clusters. | Llama 3.3 70B |
+| **Resolver** | Mediator. Resolves overlapping patches and ensures UI consistency. | Llama 3.1 70B |
+| **Verifier** | Quality Assurance. Re-runs simulations on patched HTML to confirm fixes. | Llama 3.3 70B |
+
+---
+
+## 📡 Backend Interface (API V1)
+
+The backend provides a rich Server-Sent Events (SSE) telemetry layer.
+
+### Primary Endpoints
+- `POST /api/v1/evaluate`: Upload files (max 5) and trigger the pipeline.
+- `GET /api/v1/evaluate/{job_id}/stream`: Real-time SSE stream.
+- `GET /api/v1/evaluate/{job_id}/issues`: Retrieve clustered issues.
+- `GET /api/v1/evaluate/{job_id}/report`: Download PDF summary.
+- `GET /api/v1/evaluate/{job_id}/download`: Download ZIP of all patched HTML.
+- `GET /api/v1/history`: List past sessions (recovered from disk).
+- `GET /api/v1/settings`: System configuration management.
+
+### Real-time Telemetry (SSE Events)
+The system emits structured events decoded by the frontend `PipelineContext`:
+- `pipeline_start`: Job metadata and file count.
+- `persona_start / action`: Live feed of agent thoughts, actions, and **screenshots**.
+- `clustering_start / complete`: Status of issue grouping.
+- `recommender_start / patch`: Real-time tracking of patch generation.
+- `conflict_detected / resolved`: Mediation feedback.
+- `patch_applied`: Feedback on file modifications.
+- `pipeline_complete`: Final results and download URLs.
+
+---
+
+## 🎨 Frontend: Nexus UI
+
+The frontend is a **Next.js 14** application utilizing the **Nexus Design System**—a high-fidelity, high-interaction UI focused on AI transparency.
+
+- **Dashboard**: Global system health and historical metrics.
+- **Component Analyzer**: Drag-and-drop zone for immediate auditing.
+- **Live Feed**: Displays active agents, their current action (Click, Type, etc.), and DOM selectors.
+- **Trace Visualization**: Visualizing the chain of events leading to a revealed issue.
+- **State Machine**: Powered by `PipelineContext.tsx` with full reconnection support (`Last-Event-ID`).
+
+---
+
+## 🛠 Setup & Development
+
+### 1. Requirements
+- Python 3.10+
+- Node.js 18+ (npm or yarn)
+- Groq API Key (for LLM inference)
+
+### 2. Environment Configuration (`.env`)
 ```bash
+# Agent API Keys
+SUPERVISOR_API_KEY=gsk_...
+PERSONA_API_KEY=gsk_...
+RECOMMENDER_API_KEY=gsk_...
+RESOLVER_API_KEY=gsk_...
 
-# Create virtual env (recommended)
-python -m venv venv
-# Linux/MacOS:source venv/bin/activate          # Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run
-uvicorn backend.main:app --reload
-# → API available at http://localhost:8000
-# → Swagger docs at http://localhost:8000/api/docs
+# System Settings
+MAX_NUM_PERSONAS=3
+PERSONA_MAX_STEPS=10
+MAX_CORRECTION_LOOPS=1
+LLM_MAX_CONCURRENT_CALLS=5
 ```
 
-The backend auto-detects whether the MAS pipeline is installed.
-If not, it runs a **simulation mode** that produces realistic fake events
-and writes placeholder fixed HTML — useful for frontend development.
+### 3. Execution
+**Backend:**
+```bash
+pip install -r requirements.txt
+uvicorn backend.main:app --reload
+```
 
-
-
-### 2. Frontend
-
+**Frontend:**
 ```bash
 cd frontend
-
 npm install
 npm run dev
-# → UI available at http://localhost:3000
-```
-
-The Next.js config proxies all `/api/*` requests to `http://localhost:8000`.
-
----
-
-## API Reference
-
-### `POST /api/sessions`
-Upload files and create a session.
-
-**Request:** `multipart/form-data` with field `files[]` (1–5 `.html` files, max 5 MB each)
-
-**Response:**
-```json
-{ "session_id": "abc123", "files": ["login.html"], "created_at": "…" }
 ```
 
 ---
 
-### `POST /api/sessions/{id}/run`
-Trigger pipeline evaluation.
+## 🦾 AI Reading Guide (Internal Context)
 
-**Response:** `202 Accepted` → `{ "session_id": "…", "status": "running" }`
+*This section is specifically for other AI agents continuing development on this repo.*
 
----
+- **Graph Logic**: The core workflow is defined in `core/graph.py`. Do NOT modify the topology without understanding how `PageContext` is expanded/merged between nodes.
+- **Prompt Engineering**: System prompts live in `prompts/`. They rely heavily on JSON formatting—ensure any changes maintain schema strictness.
+- **Stigmergy Pattern**: Recommenders look at `swarm_claims` to see if peer agents are targeting the same selectors (Found in `agents/recommender/recommender_agent.py`).
+- **Telemetry Bridge**: The `backend/pipeline_runner.py` intercepts `stdout` structured logs and pipes them to the SSE stream. If adding new log types, ensure they follow the `_STEP_MAP` or `_FUNC_STEP_MAP` naming conventions.
+- **UI State**: The frontend state is a single reducer in ` PipelineContext.tsx`. New SSE event types must be added to the `applyEvent` function to be visible in the UI.
 
-### `GET /api/sessions/{id}/stream`
-Server-Sent Events stream. Connect with `EventSource`. Each event is JSON.
-
----
-
-### `GET /api/sessions/{id}/status`
-Quick status poll (no SSE needed).
-
-```json
-{
-  "status": "running",
-  "progress": 45,
-  "pages_total": 3,
-  "pages_done": 1,
-  "started_at": "…",
-  "finished_at": null
-}
-```
-
----
-
-### `GET /api/sessions/{id}/results`
-Full results JSON (only available when `status == "done"`).
-
----
-
-### `GET /api/sessions/{id}/files/{filename}`
-Download a fixed HTML file (e.g. `login_fixed.html`).
-
----
-
-### `GET /api/sessions/{id}/report.pdf`
-Download the PDF report.
-
----
-
-
-
+### Known Issues & TODOs
+- [ ] **TPM Tracking**: `rate_limiter.py` needs better Tokens-Per-Minute tracking for Groq free-tier stability.
+- [ ] **Persistence**: Move `session_store.py` from disk/memory to a persistent DB (PostgreSQL/Redis).
+- [ ] **Patch Review UI**: add a side-by-side diff viewer for proposed patches.

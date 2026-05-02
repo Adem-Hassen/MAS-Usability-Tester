@@ -6,7 +6,6 @@ import copy
 import json
 import concurrent.futures
 from pathlib import Path
-from typing import Optional
 
 from config.settings import settings
 from tools.rate_limiter import groq_chat_completion

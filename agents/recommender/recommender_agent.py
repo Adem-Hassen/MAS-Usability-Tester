@@ -9,6 +9,8 @@ from typing import Optional
 
 from config.settings import settings
 from tools.rate_limiter import groq_chat_completion
+from schemas.persona_schema import UIAnalysis
+
 from schemas.issue_schema import IssueCluster, RecommenderProfile, IssueReport
 from schemas.patch_schema import PatchProposal, PatchType
 from prompts.recommender_prompts import (
