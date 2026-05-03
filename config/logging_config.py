@@ -62,6 +62,11 @@ def setup_logging(log_level: str = "INFO", log_format: str = "console") -> None:
 
     level = _parse_level(log_level)
 
+    def _event_bus_processor(logger, log_method, event_dict):
+        from core.event_bus import EventBus
+        EventBus.get().emit("log_event", **event_dict)
+        return event_dict
+
     # --- Processors shared by both formats ---
     # These run on every log event regardless of format.
     shared_processors: list[Any] = [
@@ -73,6 +78,8 @@ def setup_logging(log_level: str = "INFO", log_format: str = "console") -> None:
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         # Render stack_info if present (used by logger.exception())
         structlog.processors.StackInfoRenderer(),
+        # Emit to EventBus for frontend SSE
+        _event_bus_processor,
     ]
 
     if log_format == "json":

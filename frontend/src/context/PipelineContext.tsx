@@ -139,7 +139,13 @@ export function PipelineProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const upload = useCallback(async (files: File[]) => {
-    setState(s => ({ ...s, error: null, status: 'queued' }));
+    // Clear previous state for a fresh start
+    setState(s => ({ 
+      ...INIT, 
+      status: 'queued',
+      fileCount: files.length
+    }));
+    
     try {
       const { job_id, file_count } = await evaluate(files);
       setState(s => ({ ...s, jobId: job_id, fileCount: file_count }));

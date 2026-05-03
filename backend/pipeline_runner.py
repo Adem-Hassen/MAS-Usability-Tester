@@ -51,6 +51,15 @@ async def run_pipeline_async(session: Session, store: SessionStore) -> None:
     """Async wrapper — runs the blocking pipeline in a thread pool."""
     try:
         await asyncio.to_thread(_run_pipeline_sync, session, store)
+    except asyncio.CancelledError:
+        logger.info(f"Pipeline session {session.session_id} cancelled.")
+        session.status = SessionStatus.FAILED
+        session.error = "Pipeline was cancelled by a new request."
+        session.finished_at = datetime.utcnow()
+        store.emit(session.session_id, EventKind.ERROR,
+                   stage="pipeline", message="Evaluation cancelled.")
+        # Ensure we re-raise so the task finishes as cancelled
+        raise
     except Exception as e:
         session.status  = SessionStatus.FAILED
         session.error   = str(e)
@@ -58,6 +67,8 @@ async def run_pipeline_async(session: Session, store: SessionStore) -> None:
         store.emit(session.session_id, EventKind.ERROR,
                    stage="pipeline", message=str(e),
                    traceback=traceback.format_exc())
+    finally:
+        store.unregister_task(session.session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +125,10 @@ def _run_pipeline_sync(session: Session, store: SessionStore) -> None:
     total_pages = len(session.input_paths)
 
     # Calculate aggregates
-    total_score = sum(r.get("overall_score", 0) for r in all_results if "overall_score" in r)
+    total_score = sum(
+        r["overall_score"] for r in all_results 
+        if isinstance(r, dict) and "overall_score" in r
+    )
     score_avg = round(total_score / len(all_results), 1) if all_results else 0
 
     session.results = {
@@ -189,12 +203,10 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
     emit(EventKind.PROGRESS, value=5,
          label=f"Supervisor analysing {total_pages} page(s)")
 
-    # ── Bridge structlog → SSE: translate pipeline phases to frontend steps ──
-    # Instead of suppressing all logging, install a custom handler that:
-    #   1. Catches pipeline structlog messages and maps them to SSE step events
-    #   2. Suppresses stdout output (no terminal flooding on Windows)
-    #   3. Sends periodic progress updates so the frontend stays alive
-    import logging as _logging
+    # ── Subscribe EventBus to SSE emitter ──
+    from core.event_bus import EventBus
+    bus = EventBus.get()
+
     import threading
 
     # Map structlog event names → frontend step IDs + progress values
@@ -228,139 +240,97 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
         "report_generator":     ("report",       "running", 60, "Generating report…"),
     }
 
-    import io
-    import sys
-    import contextlib
+    _last_step = [None]
 
-    class _SSEBridgeStream(io.TextIOBase):
-        """Intercept structlog output from sys.stdout and translate to SSE events."""
-        def __init__(self, emit_fn, total_pages):
-            super().__init__()
-            self._emit = emit_fn
-            self._total = total_pages
-            self._last_step = None
+    def _emit_step(step_id, status, prog, label):
+        _last_step[0] = step_id
+        emit(EventKind.STEP, step=step_id, status=status,
+             pages_total=total_pages, label=label)
+        emit(EventKind.PROGRESS, value=prog, label=label)
 
-        def write(self, msg: str) -> int:
-            clean_msg = msg.strip()
-            if not clean_msg:
-                return len(msg)
+    def _emit_v1_event(event_key, payload):
+        def _save_screenshot(b64_data: str, prefix: str) -> str:
+            if not b64_data:
+                return ""
+            import uuid
+            import base64
+            filename = f"{prefix}_{uuid.uuid4().hex[:8]}.jpeg"
+            path = session.output_dir / filename
+            try:
+                path.write_bytes(base64.b64decode(b64_data))
+                return f"/api/v1/evaluate/{session.session_id}/screenshots/{filename}"
+            except Exception:
+                return ""
+
+        if event_key == "graph.supervisor_node.done":
+            emit(EventKind.SUPERVISOR_ANALYSIS, summary="UI analysis complete")
+        elif event_key == "page_pipeline.start":
+            emit(EventKind.PERSONA_START, persona_id="batch", persona_name="All personas")
+        elif event_key == "page_pipeline.persona_done":
+            emit(EventKind.PERSONA_COMPLETE, persona_id="batch", issues_found=0)
+        elif event_key == "persona.start":
+            scr_url = _save_screenshot(payload.get("screenshot"), f"start_{payload.get('persona_id', 'unknown')}")
+            emit(EventKind.PERSONA_START,
+                 persona_id=payload.get("persona_id"), 
+                 persona_name=payload.get("persona_name"), 
+                 screenshot=scr_url)
+        elif event_key == "persona.action":
+            scr_url = _save_screenshot(payload.get("screenshot"), f"action_{payload.get('persona_id', 'unknown')}")
+            emit(EventKind.PERSONA_ACTION,
+                 persona_id=payload.get("persona_id"), 
+                 persona_name=payload.get("persona_name"),
+                 action_type=payload.get("action_type"), 
+                 selector=payload.get("selector"), 
+                 result=payload.get("result"),
+                 screenshot=scr_url)
+        elif event_key in ("clustering_node", "cluster_engine"):
+            if "clustering_node" == event_key:
+                emit(EventKind.CLUSTERING_START, raw_issue_count=0)
+            else:
+                emit(EventKind.CLUSTERING_COMPLETE, cluster_count=0, duplicate_count=0)
+        elif event_key == "recommender.start" or event_key == "recommender_node":
+            emit(EventKind.RECOMMENDER_START, recommender_id="batch", cluster_ids=[])
+        elif event_key == "recommender.proposal_complete":
+            emit(EventKind.RECOMMENDER_PATCH, status="done", message="Patch generated")
+        elif event_key == "recommender.proposal_failed":
+            emit(EventKind.RECOMMENDER_PATCH, status="error", message="Patch generation failed")
+        elif event_key == "conflict_resolver":
+            emit(EventKind.CONFLICT_RESOLVED, resolution_strategy="llm")
+        elif event_key == "patch_applicator":
+            emit(EventKind.PATCH_APPLIED, file_name="", patch_count=0)
+
+    def _bus_handler(event_type: str, payload: dict):
+        if event_type == "log_event":
+            msg = payload.get("event", "")
+            level = payload.get("level", "info")
             
-            # 1. Parse simple log level if possible
-            level = "info"
-            if "warning" in msg.lower() or "[warning" in msg.lower():
-                level = "warning"
-            elif "error" in msg.lower() or "[error" in msg.lower():
-                level = "error"
-            
-            # Remove ANSI colors if any (ConsoleRenderer might output ANSI)
+            # Remove ANSI colors if any
             import re
             ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-            clean_text = ansi_escape.sub('', clean_msg)
+            clean_text = ansi_escape.sub('', msg)
             
-            # Emit the raw log event so the UI can display traces
-            self._emit(EventKind.LOG, level=level, message=clean_text)
+            emit(EventKind.LOG, level=level, message=clean_text)
 
-            # 2. Check direct event name matches
             for event_prefix, (step_id, status, prog, label) in _STEP_MAP.items():
                 if event_prefix in msg:
-                    self._emit_step(step_id, status, prog, label)
-                    self._emit_v1_event(event_prefix, msg)
-                    return len(msg)
+                    _emit_step(step_id, status, prog, label)
+                    _emit_v1_event(event_prefix, payload)
+                    return
 
-            # 3. Check function/module name matches
             for func_key, (step_id, status, prog, label) in _FUNC_STEP_MAP.items():
                 if func_key in msg:
-                    if step_id != self._last_step:
-                        self._emit_step(step_id, status, prog, label)
-                        self._emit_v1_event(func_key, msg)
-                    return len(msg)
+                    if step_id != _last_step[0]:
+                        _emit_step(step_id, status, prog, label)
+                        _emit_v1_event(func_key, payload)
+                    return
+        else:
+            try:
+                kind = EventKind(event_type)
+                emit(kind, **payload)
+            except ValueError:
+                pass
 
-            return len(msg)
-
-        def flush(self) -> None:
-            pass
-
-        def _emit_step(self, step_id, status, prog, label):
-            self._last_step = step_id
-            self._emit(EventKind.STEP, step=step_id, status=status,
-                       pages_total=self._total, label=label)
-            self._emit(EventKind.PROGRESS, value=prog, label=label)
-
-        def _extract_field(self, msg, key):
-            """Extract a field value from a structlog console-formatted message."""
-            import re
-            # Try key='value', key="value", or key=value
-            pattern = fr"{key}=(['\"]?)(.*?)\1(?:\s|$|,)"
-            match = re.search(pattern, msg)
-            return match.group(2) if match else None
-
-        def _emit_v1_event(self, event_key, raw_msg):
-            """Emit structured V1 events based on the intercepted structlog event name."""
-            # Supervisor analysis complete
-            if event_key == "graph.supervisor_node.done":
-                self._emit(EventKind.SUPERVISOR_ANALYSIS, summary="UI analysis complete")
-
-            # Persona simulation lifecycle
-            elif event_key == "page_pipeline.start":
-                self._emit(EventKind.PERSONA_START,
-                           persona_id="batch", persona_name="All personas")
-            elif event_key == "page_pipeline.persona_done":
-                # Extract persona info from log if possible
-                self._emit(EventKind.PERSONA_COMPLETE,
-                           persona_id="batch", issues_found=0)
-            
-            elif event_key == "persona.start":
-                pid = self._extract_field(raw_msg, "persona_id")
-                pname = self._extract_field(raw_msg, "persona_name")
-                screenshot = self._extract_field(raw_msg, "screenshot")
-                self._emit(EventKind.PERSONA_START,
-                           persona_id=pid, persona_name=pname, screenshot=screenshot)
-
-            elif event_key == "persona.action":
-                pid = self._extract_field(raw_msg, "persona_id")
-                pname = self._extract_field(raw_msg, "persona_name")
-                atype = self._extract_field(raw_msg, "action_type")
-                sel = self._extract_field(raw_msg, "selector")
-                res = self._extract_field(raw_msg, "result")
-                screenshot = self._extract_field(raw_msg, "screenshot")
-                self._emit(EventKind.PERSONA_ACTION,
-                           persona_id=pid, persona_name=pname,
-                           action_type=atype, selector=sel, result=res,
-                           screenshot=screenshot)
-
-            # Clustering
-            elif event_key in ("clustering_node", "cluster_engine"):
-                if "clustering_node" == event_key:
-                    self._emit(EventKind.CLUSTERING_START, raw_issue_count=0)
-                else:
-                    self._emit(EventKind.CLUSTERING_COMPLETE,
-                               cluster_count=0, duplicate_count=0)
-
-            # Recommender
-            elif event_key == "recommender.start":
-                self._emit(EventKind.RECOMMENDER_START,
-                           recommender_id="batch", cluster_ids=[])
-            elif event_key == "recommender.proposal_complete":
-                self._emit(EventKind.RECOMMENDER_PATCH,
-                           status="done", message="Patch generated")
-            elif event_key == "recommender.proposal_failed":
-                self._emit(EventKind.RECOMMENDER_PATCH,
-                           status="error", message="Patch generation failed")
-            elif event_key == "recommender_node":
-                self._emit(EventKind.RECOMMENDER_START,
-                           recommender_id="batch", cluster_ids=[])
-
-            # Conflict resolution
-            elif event_key == "conflict_resolver":
-                self._emit(EventKind.CONFLICT_RESOLVED,
-                           resolution_strategy="llm")
-
-            # Patch application
-            elif event_key == "patch_applicator":
-                self._emit(EventKind.PATCH_APPLIED,
-                           file_name="", patch_count=0)
-
-    _bridge_stream = _SSEBridgeStream(emit, total_pages)
+    bus.subscribe(_bus_handler)
 
     # Heartbeat thread: send keepalive progress in case no log events arrive
     _pipeline_done = threading.Event()
@@ -374,10 +344,8 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
     heartbeat_thread.start()
 
     try:
-        # Redirect sys.stdout to our bridge stream. This suppresses output
-        # to the terminal and allows us to parse structlog json logs.
-        with contextlib.redirect_stdout(_bridge_stream):
-            state = run_evaluation(pages=pages)
+        # We no longer need to redirect sys.stdout
+        state = run_evaluation(pages=pages)
     except Exception as e:
         _pipeline_done.set()
         emit(EventKind.LOG, level="error",
@@ -389,6 +357,7 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
     finally:
         _pipeline_done.set()
         heartbeat_thread.join(timeout=2)
+        bus.unsubscribe_all()
 
     emit(EventKind.STEP, step="supervisor", status="done",
          pages_total=total_pages,

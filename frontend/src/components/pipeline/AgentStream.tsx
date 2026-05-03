@@ -30,70 +30,69 @@ export default function AgentStream({ logs, isRunning, activeAgents }: AgentStre
   }, [logs]);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 bg-nexus-bg">
-      <div className="flex items-center justify-between px-6 py-4 border-b border-nexus-outline-variant bg-[#0E0F11]">
-        <div className="flex items-center gap-3">
-          <Terminal size={18} className="text-nexus-primary" />
-          <SectionLabel className="mb-0">Agent Simulation Stream</SectionLabel>
+    <div className="flex flex-col h-full bg-[#050505] font-mono text-[11px]">
+      {/* Compact Terminal Header */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#0A0A0A]">
+        <div className="flex items-center gap-2">
+          <Terminal size={14} className="text-nexus-primary" />
+          <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-nexus-outline">Simulation Stream</span>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 bg-nexus-secondary rounded-none" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-nexus-outline">Active Agents: {displayAgents.length}</span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-nexus-surface border border-white/5">
+            <User size={10} className="text-nexus-outline" />
+            <span className="text-[9px] font-bold text-nexus-outline">{displayAgents.length} ACTIVE</span>
           </div>
           {isRunning && (
-            <div className="flex items-center gap-2">
-              <div className="status-pulse" />
-              <span className="text-[10px] font-bold uppercase tracking-widest text-nexus-primary">Streaming</span>
+            <div className="flex items-center gap-2 px-2 py-0.5 bg-nexus-primary/10 border border-nexus-primary/20">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-nexus-primary opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-nexus-primary"></span>
+              </span>
+              <span className="text-[9px] font-bold uppercase tracking-widest text-nexus-primary">Live</span>
             </div>
           )}
         </div>
       </div>
 
+      {/* Main Terminal Output */}
       <div 
         ref={scrollRef}
-        className="flex-1 overflow-y-auto p-6 font-mono text-[12px] space-y-2 selection:bg-nexus-primary/20"
+        className="flex-1 overflow-y-auto p-4 space-y-1 selection:bg-nexus-primary/30 custom-scrollbar"
       >
         {logs.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-nexus-outline gap-3 opacity-50">
-            <Bot size={48} strokeWidth={1} />
-            <p className="font-sans uppercase tracking-[0.2em] text-[10px] font-bold">Waiting for agent activity...</p>
+          <div className="h-full flex flex-col items-center justify-center text-nexus-outline gap-3 opacity-30">
+            <Bot size={40} strokeWidth={1} />
+            <p className="uppercase tracking-[0.2em] text-[9px] font-bold italic">Waiting for signal...</p>
           </div>
         ) : (
           logs.map((log, i) => {
             const isPersonaStart = log.message.includes('Persona started');
-            const isAction = log.message.includes(': ');
             const isError = log.level === 'error' || log.message.toLowerCase().includes('failed');
 
             if (isPersonaStart) {
               const personaName = log.message.split(': ')[1];
               return (
-                <div key={i} className="py-4 my-2 border-y border-nexus-outline-variant/30 bg-nexus-primary/5 flex items-center gap-4 px-4">
-                  <div className="w-10 h-10 bg-nexus-surface border border-nexus-outline-variant flex items-center justify-center text-nexus-primary">
-                    <User size={20} />
-                  </div>
-                  <div>
-                    <div className="text-nexus-primary font-bold uppercase tracking-widest text-[10px]">Session Initialized</div>
-                    <div className="text-sm font-syne font-bold">{personaName}</div>
-                  </div>
+                <div key={i} className="py-2 my-2 border-l-2 border-nexus-primary bg-nexus-primary/5 flex flex-col gap-1 px-3">
+                  <div className="text-nexus-primary font-bold uppercase tracking-widest text-[8px]">New Instance Detected</div>
+                  <div className="text-[12px] font-syne font-bold text-white/90">{personaName}</div>
                 </div>
               );
             }
 
             return (
               <div key={i} className={clsx(
-                "group flex gap-3 transition-colors hover:bg-white/5 px-2 py-0.5",
-                isError ? "text-nexus-error" : "text-white/70"
+                "group flex gap-2 transition-colors hover:bg-white/5 py-0.5",
+                isError ? "text-nexus-error/90" : "text-nexus-outline/80"
               )}>
-                <span className="text-nexus-outline/40 shrink-0 select-none">[{log.ts?.split('T')[1]?.split('.')[0] || '...'}]</span>
+                <span className="text-[10px] text-white/20 shrink-0 select-none">[{log.ts?.split('T')[1]?.split('.')[0] || '...'}]</span>
                 <span className={clsx(
-                  "shrink-0 font-bold px-1 rounded-none",
-                  log.level === 'error' ? "bg-nexus-error text-nexus-bg" : 
-                  log.level === 'warning' ? "bg-nexus-tertiary text-nexus-bg" : "text-nexus-primary"
+                  "shrink-0 font-bold px-1 text-[9px] min-w-[45px] text-center",
+                  log.level === 'error' ? "text-nexus-error" : 
+                  log.level === 'warning' ? "text-nexus-tertiary" : "text-nexus-primary/60"
                 )}>
                   {(log.level || 'info').toUpperCase()}
                 </span>
-                <span className="flex-1 break-words">
+                <span className="flex-1 break-words font-mono text-white/90">
                   {log.message}
                 </span>
               </div>
@@ -102,26 +101,24 @@ export default function AgentStream({ logs, isRunning, activeAgents }: AgentStre
         )}
       </div>
 
-      {/* Persona Action Monitor (Bottom Overlay) */}
-      <div className="p-6 bg-gradient-to-t from-nexus-bg to-transparent pointer-events-none">
-        <div className="grid grid-cols-3 gap-4 pointer-events-auto">
-          {displayAgents.map((name, i) => (
-            <Card key={i} variant="elevated" className="!p-3 border-l-2 border-l-nexus-primary flex items-center gap-3 bg-nexus-surface/80 backdrop-blur-sm">
-              <div className="w-8 h-8 rounded-none bg-nexus-surface border border-nexus-outline-variant flex items-center justify-center">
-                <User size={14} className={i === 0 ? "text-nexus-primary" : "text-nexus-outline"} />
+      {/* Active Persona Mini-Monitors (Footer) */}
+      <div className="px-4 py-3 border-t border-white/5 bg-[#080808] grid grid-cols-3 xl:grid-cols-4 gap-3">
+        {displayAgents.map((name, i) => (
+          <div key={i} className="flex items-center gap-2 p-1.5 border border-white/5 bg-white/[0.02]">
+            <div className="w-6 h-6 shrink-0 bg-black border border-white/10 flex items-center justify-center">
+              <User size={12} className={i === 0 ? "text-nexus-primary" : "text-nexus-outline/40"} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[8px] font-bold uppercase text-nexus-outline truncate tracking-tight">{name}</div>
+              <div className="text-[9px] font-mono text-nexus-secondary flex items-center gap-1 opacity-70">
+                <span className="w-1 h-1 rounded-full bg-nexus-secondary animate-pulse" />
+                <span className="truncate">Active</span>
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[9px] font-bold uppercase text-nexus-outline truncate">{name}</div>
-                <div className="text-[10px] font-mono text-nexus-secondary flex items-center gap-1">
-                  <Command size={10} />
-                  <span>Scanning DOM...</span>
-                </div>
-              </div>
-              {isRunning && i === 0 && <StatusDot status="running" className="!w-1.5 !h-1.5" />}
-            </Card>
-          ))}
-        </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
+  
   );
 }

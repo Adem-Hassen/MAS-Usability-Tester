@@ -96,4 +96,7 @@ class DiagnosticReport(BaseModel):
     )
     
 
+    # Proactive Audit results (axe-core)
+    audit_results: list = Field(default_factory=list)
+
     model_config = {"use_enum_values": True}

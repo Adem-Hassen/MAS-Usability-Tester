@@ -44,6 +44,7 @@ from prompts.persona_prompts import (
 from agents.persona.agent_sandbox import build_sandbox, cleanup_sandbox
 from agents.persona.playwright_engine import PlaywrightEngine, DOMState, ActionResult
 from monitoring.logger import get_logger
+from backend.agent_memory import agent_memory
 
 logger = get_logger(__name__)
 
@@ -104,8 +105,24 @@ def persona_node(state: dict) -> dict:
     logger.info("persona.start", persona_id=persona.persona_id,
                 name=persona.name, goal=persona.task_goal)
 
-    runner = PersonaRunner(persona, state)
+    # ── Memory Retrieval (P7) ──────────────────────────────────────────
+    url    = state.get("url", "unknown_url")
+    memory_context = agent_memory.format_memory_for_prompt(url, persona.persona_id)
+
+    runner = PersonaRunner(persona, state, memory_context=memory_context)
     result = runner.run()
+
+    # ── Memory Recording (P7) ───────────────────────────────────────────
+    # If the simulation was successful or failed in a notable way, record it.
+    if result.task_completed:
+        agent_memory.record_experience(url, persona.persona_id, "success", 
+            f"Completed task '{persona.task_goal}' successfully.")
+    elif result.stop_reason == StopReason.STUCK:
+        agent_memory.record_experience(url, persona.persona_id, "failure", 
+            f"Got stuck while trying to: {runner._mem.last_action}. Note: check for invisible overlays or invalid HTML.")
+    elif result.issues:
+        agent_memory.record_experience(url, persona.persona_id, "observation", 
+            f"Detected {len(result.issues)} issues, including: {result.issues[0].title}")
 
     logger.info(
         "persona.done",
@@ -124,9 +141,10 @@ def persona_node(state: dict) -> dict:
 
 class PersonaRunner:
 
-    def __init__(self, persona: PersonaProfile, state: dict):
+    def __init__(self, persona: PersonaProfile, state: dict, memory_context: str = ""):
         self.persona  = persona
         self.state    = state
+        self.memory_context = memory_context
         self.steps:   list[ActionStep]  = []
         self.issues:  list[IssueReport] = []
         self._ui_map: Optional[dict]    = None
@@ -525,6 +543,7 @@ class PersonaRunner:
                          f"NO — still need: {', '.join(self._mem.fields_required)}",
             observe_count=self._mem.observe_count,
             last_action=self._mem.last_action,
+            memory_context=self.memory_context,
         )
         return self._call_llm(system, user, label="decide")
 

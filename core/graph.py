@@ -32,6 +32,14 @@ from agents.recommender.conflict_resolver  import conflict_resolver_node as _con
 from agents.supervisor.patch_applicator   import patch_applicator_node  as _patch_node
 from agents.supervisor.verification_loop import verification_node      as _verification_node
 from agents.supervisor.report_generator         import report_generator_node  as _report_node
+from tools.analysis.audit_engine import audit_node as _audit_node
+
+from tools.analysis.design_token_extractor import design_token_node as _token_node
+from tools.analysis.plugin_base import plugin_registry
+
+# Import plugins to trigger registration
+import tools.analysis.plugins.audit_plugin
+import tools.analysis.plugins.token_plugin
 
 logger = get_logger(__name__)
 
@@ -66,6 +74,8 @@ def _ctx_to_flat(ctx: PageContext) -> dict:
         "correction_loop_count":    ctx.correction_loop_count,
         "report":                   ctx.report,
         "pipeline_error":           ctx.page_error,
+        "audit_results":            list(ctx.audit_results),
+        "design_tokens":            dict(ctx.design_tokens),
         "used_persona_names":       [],
         "used_persona_goals":       [],
         "used_persona_constraints": [],
@@ -90,6 +100,8 @@ _FIELD_MAP = {
     "correction_loop_count": "correction_loop_count",
     "report":                "report",
     "pipeline_error":        "page_error",
+    "audit_results":         "audit_results",
+    "design_tokens":         "design_tokens",
 }
 
 
@@ -187,6 +199,11 @@ def page_pipeline_node(state: dict) -> dict:
 
     # ── Step 1: Persona simulations (sequential within this page) ─────────
     ctx = _run_simulations(ctx, state)
+
+    # ── Step 1b: Analysis Plugins (A10 Plugin System) ─────────────────────
+    for plugin in plugin_registry.get_plugins():
+        logger.info("page_pipeline.running_plugin", plugin=plugin.plugin_id)
+        ctx = plugin.run(ctx)
 
     # ── Step 2: Trace verification ─────────────────────────────────────────
     ctx = _run_analysis(ctx)
@@ -286,6 +303,18 @@ def _run_simulations(ctx: PageContext, outer_state: dict) -> PageContext:
     ctx = copy.copy(ctx)
     ctx.simulation_results = all_results
     return ctx
+
+
+def _run_audit(ctx: PageContext) -> PageContext:
+    flat   = _ctx_to_flat(ctx)
+    result = _audit_node(flat)
+    return _flat_to_ctx(ctx, result)
+
+
+def _run_design_tokens(ctx: PageContext) -> PageContext:
+    flat   = _ctx_to_flat(ctx)
+    result = _token_node(flat)
+    return _flat_to_ctx(ctx, result)
 
 
 def _run_analysis(ctx: PageContext) -> PageContext:
@@ -462,6 +491,8 @@ def _write_artefacts(ctx: PageContext) -> None:
             logger.warning("artefacts.save_failed", file=name, error=str(e))
 
     _save("simulation_results.json",   ctx.simulation_results)
+    _save("audit_results.json",        ctx.audit_results)
+    _save("design_tokens.json",        ctx.design_tokens)
     _save("trace_verifications.json",  ctx.trace_verifications)
     _save("verified_issues.json",      ctx.verified_issues)
     _save("issue_clusters.json",       ctx.issue_clusters)

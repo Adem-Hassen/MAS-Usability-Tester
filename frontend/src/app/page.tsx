@@ -120,7 +120,7 @@ export default function DashboardPage() {
                   </div>
                   <h3 className="text-lg font-syne font-bold mb-2">Drag & Drop Component</h3>
                   <p className="text-sm text-nexus-outline max-w-sm mb-8">
-                    Drop JSX, Vue, or HTML files to start a deep accessibility audit.
+                    Drop  HTML files to start a deep accessibility audit.
                   </p>
                   <Button variant="primary" className="gap-3">
                     {uploading ? "UPLOADING..." : "SELECT FILES"}

@@ -6,6 +6,7 @@ import { usePipeline } from '@/hooks/usePipeline';
 import { Sidebar, Header } from '@/components/layout';
 import { Button } from '@/components/ui';
 import { FileText, Zap } from 'lucide-react';
+import clsx from 'clsx';
 import PipelineRail from '@/components/pipeline/PipelineRail';
 import AgentStream from '@/components/pipeline/AgentStream';
 import OutputTabs from '@/components/pipeline/OutputTabs';
@@ -14,6 +15,7 @@ import { LivePreviewPanel } from '@/components/pipeline/LivePreviewPanel';
 export default function EvaluatePage() {
   const { job_id } = useParams();
   const { state, fetchResults, connect, reset } = usePipeline();
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false);
   const isRunning = state.status === 'running' || state.status === 'queued';
 
   useEffect(() => {
@@ -30,10 +32,16 @@ export default function EvaluatePage() {
 
   return (
     <div className="flex h-screen bg-nexus-bg font-sans text-white overflow-hidden">
-      <Sidebar />
+      <Sidebar 
+        isCollapsed={isSidebarCollapsed} 
+        onToggle={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+      />
       
-      <div className="flex-1 ml-sidebar flex flex-col min-w-0">
-        <Header />
+      <div className={clsx(
+        "flex-1 flex flex-col min-w-0 transition-all duration-300",
+        isSidebarCollapsed ? "ml-16" : "ml-sidebar"
+      )}>
+        <Header isSidebarCollapsed={isSidebarCollapsed} />
         
         {/* Sub-header with actions */}
         <div className="px-8 py-4 border-b border-nexus-outline-variant flex items-center justify-between bg-nexus-surface/20">
@@ -87,21 +95,23 @@ export default function EvaluatePage() {
           />
 
           {/* Panel 2: Agent Stream & Live Preview (Center) */}
-          <div className="flex-1 flex flex-col min-w-0 border-r border-nexus-outline-variant bg-nexus-surface/5">
-            {/* Live Simulation View */}
-            <div className="p-6 border-b border-nexus-outline-variant bg-nexus-bg">
+          <div className="flex-1 flex flex-col min-w-0 border-r border-nexus-outline-variant bg-nexus-surface/5 overflow-hidden">
+            {/* Live Simulation View - Now more compact vertically */}
+            <div className="p-4 border-b border-nexus-outline-variant bg-nexus-bg/50 shrink-0">
               <LivePreviewPanel />
             </div>
             
-            <AgentStream 
-              logs={state.logs}
-              isRunning={isRunning}
-              activeAgents={state.activeAgents}
-            />
+            <div className="flex-1 min-h-0">
+              <AgentStream 
+                logs={state.logs}
+                isRunning={isRunning}
+                activeAgents={state.activeAgents}
+              />
+            </div>
           </div>
 
-          {/* Panel 3: Output Tabs (Right) */}
-          <div className="w-[400px] shrink-0">
+          {/* Panel 3: Output Tabs (Right) - Increased width from 400px to 500px for better diff viewing */}
+          <div className="w-[500px] shrink-0 xl:w-[600px] transition-all duration-300">
             <OutputTabs 
               issues={state.issues}
               patches={state.patches}

@@ -11,8 +11,28 @@ from monitoring.logger import get_logger
 
 logger = get_logger(__name__)
 
+from html.parser import HTMLParser
+
 _CSS_TYPES = {"css_rule", "css_class"}
 _JS_TYPES  = {"js_snippet"}
+
+class _ValidateHTML(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.errors = []
+    def handle_starttag(self, tag, attrs): pass
+    def handle_endtag(self, tag): pass
+    def error(self, message):
+        self.errors.append(message)
+
+def _validate_patch_result(html: str, patch_id: str) -> list[str]:
+    """Quick structural validation after applying a patch."""
+    validator = _ValidateHTML()
+    try:
+        validator.feed(html)
+    except Exception as e:
+        return [f"Patch {patch_id} produced malformed HTML: {e}"]
+    return validator.errors
 
 
 # ---------------------------------------------------------------------------
@@ -129,11 +149,15 @@ def _apply_patches(
             else:
                 new_html, ok, reason = _apply_single_patch(current, patch)
                 if ok:
-                    current = new_html
-                    applied += 1
-                    logger.debug("patch_applicator.html_applied",
-                                 patch_id=patch.resolved_patch_id,
-                                 target=patch.target_element)
+                    validation_errors = _validate_patch_result(new_html, str(patch.resolved_patch_id))
+                    if validation_errors:
+                        skipped.append((patch.resolved_patch_id, f"Validation failed: {validation_errors[0]}"))
+                    else:
+                        current = new_html
+                        applied += 1
+                        logger.debug("patch_applicator.html_applied",
+                                     patch_id=patch.resolved_patch_id,
+                                     target=patch.target_element)
                 else:
                     skipped.append((patch.resolved_patch_id, reason))
 

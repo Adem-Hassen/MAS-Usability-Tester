@@ -17,6 +17,7 @@ class InteractiveElement(BaseModel):
     input_type: Optional[str] = Field(None, description="For inputs: text | password | email | checkbox | etc.")
     is_accessible: bool = Field(True, description="Whether it has an accessible label/role")
     notes: Optional[str] = Field(None, description="Anything notable: missing label, no focus style, etc.")
+    computed_styles: Optional[dict[str, str]] = Field(None, description="Computed CSS properties like color, backgroundColor, etc.")
 
 
 class CriticalPath(BaseModel):

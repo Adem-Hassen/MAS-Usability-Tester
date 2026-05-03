@@ -62,8 +62,9 @@ def recommender_node(state: dict) -> dict:
     ui_analysis  = state.get("ui_analysis")
     html_content = state.get("html_content", "")
     ui_context   = state.get("ui_context", "General web UI")
+    design_tokens = state.get("design_tokens", {})
 
-    proposal = _propose_patch(profile, cluster, html_content, ui_context, ui_analysis, overlapping_selectors)
+    proposal = _propose_patch(profile, cluster, html_content, ui_context, ui_analysis, overlapping_selectors, design_tokens)
 
     if proposal is None:
         logger.warning("recommender.proposal_failed",
@@ -210,6 +211,7 @@ def _propose_patch(
     ui_context: str,
     ui_analysis: Optional[UIAnalysis] = None,
     overlapping_selectors: list[str] = [],
+    design_tokens: dict = {},
 ) -> Optional[PatchProposal]:
 
     system = RECOMMENDER_SYSTEM.format(
@@ -240,6 +242,7 @@ def _propose_patch(
         global_styles=global_styles,
         ui_context=ui_context,
         ui_analysis_json=ui_analysis.model_dump_json(indent=2) if ui_analysis else "None provided",
+        design_tokens_json=json.dumps(design_tokens, indent=2),
     ) + overlap_note
 
     raw, error = _call_recommender_llm(system, user, task="propose_patch")
@@ -247,6 +250,25 @@ def _propose_patch(
         logger.error("recommender.llm_error",
                      recommender_id=profile.recommender_id, error=error)
         return None
+
+    # ── R5: Multi-pass self-critique if confidence is low ────────────────
+    try:
+        data = json.loads(raw)
+        conf = data.get("confidence", 0.5)
+        if conf < 0.8:
+            logger.info("recommender.low_confidence_triggering_critique", 
+                        recommender_id=profile.recommender_id, conf=conf)
+            refined_raw = _critique_and_refine(profile, cluster, html_snippet, raw)
+            if refined_raw:
+                refined_data = json.loads(refined_raw)
+                if "refined_proposal" in refined_data:
+                    data = refined_data["refined_proposal"]
+                    raw = json.dumps(data)
+                    logger.info("recommender.critique_successful", 
+                                recommender_id=profile.recommender_id)
+    except Exception as e:
+        logger.warning("recommender.critique_failed", error=str(e))
+
 
     try:
         data = json.loads(raw)
@@ -437,6 +459,27 @@ def _extract_relevant_html(html_content: str, affected_elements: list[str]) -> s
 def _extract_global_styles(html_content: str) -> str:
     styles = re.findall(r'<style[^>]*>(.*?)</style>', html_content, re.DOTALL | re.IGNORECASE)
     return "\n".join(styles).strip()
+
+
+def _critique_and_refine(
+    profile: RecommenderProfile,
+    cluster: IssueCluster,
+    html_snippet: str,
+    previous_proposal_json: str,
+) -> Optional[str]:
+    system = (
+        "You are an expert A11y & UX auditor. Critique the following fix proposal. "
+        "Does it actually solve the issue? Does it introduce new problems? "
+        "Output ONLY a JSON object with: {\"critique\": \"...\", \"refined_proposal\": { ... }}"
+    )
+    user = (
+        f"Issue: {cluster.cluster_label}\n"
+        f"HTML Context:\n{html_snippet}\n\n"
+        f"Previous Proposal:\n{previous_proposal_json}\n\n"
+        "Provide a critique and a refined version of the proposal JSON."
+    )
+    raw, error = _call_recommender_llm(system, user, task="critique_refine")
+    return raw if not error else None
 
 
 def _call_recommender_llm(

@@ -199,6 +199,11 @@ CURRENT PAGE DOM
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {page_dom_summary}
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AGENT MEMORY (Lessons from past runs)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{memory_context}
+
 DECISION CHECKLIST (answer before choosing action):
 1. What is page_phase?  →  {page_phase}
 2. Are fields_required empty?  →  {fields_empty}

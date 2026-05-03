@@ -119,16 +119,16 @@ export default function OutputTabs({
   const filteredPatches = pageFilter ? patches.filter(p => p.page === pageFilter) : patches;
 
   const tabs = [
-    { id: 'issues', label: 'Issues', icon: AlertCircle, count: filteredIssues.length, color: 'text-nexus-error' },
-    { id: 'patches', label: 'Patches', icon: Zap, count: filteredPatches.length, color: 'text-nexus-secondary' },
-    { id: 'preview', label: 'Preview', icon: Layout, count: 0, color: 'text-nexus-primary' },
+    { id: 'issues', label: 'Detection', icon: AlertCircle, count: filteredIssues.length, color: 'text-nexus-error' },
+    { id: 'patches', label: 'Repairs', icon: Zap, count: filteredPatches.length, color: 'text-nexus-secondary' },
+    { id: 'preview', label: 'Verify', icon: Layout, count: 0, color: 'text-nexus-primary' },
     { id: 'output', label: 'Export', icon: FileJson, count: 0, color: 'text-nexus-outline' },
   ];
 
   return (
     <div className="flex flex-col h-full bg-[#0E0F11] border-l border-nexus-outline-variant">
-      {/* Tab Headers */}
-      <div className="flex border-b border-nexus-outline-variant">
+      {/* Refined Tab Headers */}
+      <div className="flex bg-[#0A0B0D] border-b border-nexus-outline-variant/30">
         {tabs.map((tab) => {
           const isActive = activeTab === tab.id;
           return (
@@ -136,15 +136,26 @@ export default function OutputTabs({
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={clsx(
-                "flex-1 flex flex-col items-center justify-center py-4 px-2 gap-1 border-b-2 transition-all relative",
-                isActive ? "bg-nexus-primary/5 border-nexus-primary text-white" : "border-transparent text-nexus-outline hover:text-white hover:bg-white/5"
+                "flex-1 flex flex-col items-center justify-center py-3 px-2 gap-1.5 transition-all relative group",
+                isActive ? "text-white" : "text-nexus-outline hover:text-white/80"
               )}
             >
-              <tab.icon size={16} className={clsx(isActive ? tab.color : "text-nexus-outline")} />
-              <span className="text-[10px] font-bold uppercase tracking-widest">{tab.label}</span>
+              <div className={clsx(
+                "w-8 h-8 flex items-center justify-center transition-all duration-300",
+                isActive ? "bg-white/5 scale-110" : "group-hover:bg-white/5"
+              )}>
+                <tab.icon size={14} className={clsx(isActive ? tab.color : "text-nexus-outline")} />
+              </div>
+              <span className="text-[9px] font-bold uppercase tracking-[0.15em]">{tab.label}</span>
+              
+              {/* Active Indicator */}
+              {isActive && (
+                <div className={clsx("absolute bottom-0 left-0 right-0 h-0.5", tab.color.replace('text-', 'bg-'))} />
+              )}
+
               {tab.count > 0 && (
                 <span className={clsx(
-                  "absolute top-2 right-2 text-[8px] px-1 font-bold rounded-none",
+                  "absolute top-2 right-4 text-[8px] px-1 font-mono font-bold min-w-[14px] text-center",
                   isActive ? "bg-nexus-primary text-nexus-bg" : "bg-nexus-outline-variant text-nexus-outline"
                 )}>
                   {tab.count}
@@ -157,10 +168,39 @@ export default function OutputTabs({
 
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto p-6">
-        {activeTab === 'issues' && <IssuesPanel issues={filteredIssues} />}
-        {activeTab === 'patches' && <PatchesPanel patches={filteredPatches} />}
+        {activeTab === 'issues' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <SectionLabel className="mb-0">Detected Anomalies</SectionLabel>
+              <Badge variant="neutral">{filteredIssues.length} Findings</Badge>
+            </div>
+            <IssuesPanel issues={filteredIssues} />
+          </div>
+        )}
+        {activeTab === 'patches' && (
+           <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <SectionLabel className="mb-0">Proposed Repairs</SectionLabel>
+              <Badge variant="secondary">{filteredPatches.length} Patches</Badge>
+            </div>
+            <PatchesPanel patches={filteredPatches} />
+          </div>
+        )}
         {activeTab === 'preview' && (
-          <PreviewPanel results={results} sessionId={sessionId || ''} pageFilter={pageFilter} />
+          <div className="h-full flex flex-col space-y-4">
+             <div className="flex items-center justify-between">
+              <SectionLabel className="mb-0">Regression Analysis</SectionLabel>
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] font-mono text-nexus-outline uppercase">Confidence</span>
+                <div className="w-12 h-1 bg-nexus-surface-variant">
+                  <div className="h-full bg-nexus-secondary w-[85%]" />
+                </div>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 bg-black/40 border border-white/5 p-1">
+              <PreviewPanel results={results} sessionId={sessionId || ''} pageFilter={pageFilter} />
+            </div>
+          </div>
         )}
         {activeTab === 'output' && (
           <div className="space-y-6">

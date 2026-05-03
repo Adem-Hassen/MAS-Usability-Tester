@@ -149,6 +149,9 @@ UI context: {ui_context}
 UI Analysis (Type, Purpose, Critical Paths):
 {ui_analysis_json}
 
+Design System Tokens (Colors, Fonts, Spacing):
+{design_tokens_json}
+
 STEP-BY-STEP INSTRUCTIONS:
 1. Read fix_strategy_hint — it tells you which technology to use.
 2. Choose patch_type based on the technology:

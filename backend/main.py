@@ -97,13 +97,19 @@ async def evaluate(
         if f.size and f.size > 5 * 1024 * 1024:
             raise HTTPException(400, f"File '{f.filename}' exceeds 5 MB limit.")
 
+    # Automatically cancel any previous running pipelines to free resources
+    await store.cancel_all()
+
     job_id = uuid.uuid4().hex[:12]
     session = await store.create(job_id, files)
 
     # Immediately start the pipeline
     session.status = SessionStatus.RUNNING
     session.started_at = datetime.utcnow()
-    background_tasks.add_task(run_pipeline_async, session, store)
+    
+    # Create the task and register it for potential cancellation
+    task = asyncio.create_task(run_pipeline_async(session, store))
+    store.register_task(job_id, task)
 
     return {
         "job_id": job_id,
@@ -201,6 +207,16 @@ async def download_report_v1(job_id: str):
         raise HTTPException(404, "PDF report not yet generated.")
     return FileResponse(pdf_path, filename=f"mas_report_{job_id}.pdf",
                         media_type="application/pdf")
+
+
+@app.get("/api/v1/evaluate/{job_id}/screenshots/{filename}")
+async def get_screenshot(job_id: str, filename: str):
+    """Serve a screenshot saved during evaluation."""
+    session = _get_session(job_id)
+    path = session.output_dir / filename
+    if not path.exists():
+        raise HTTPException(404, "Screenshot not found.")
+    return FileResponse(path, media_type="image/jpeg")
 
 
 @app.get("/api/v1/evaluate/{job_id}/download")

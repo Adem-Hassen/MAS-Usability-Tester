@@ -18,6 +18,9 @@ from schemas.persona_schema import UIAnalysis
 from prompts.supervisor_prompts import REPORT_SUMMARY_SYSTEM, REPORT_SUMMARY_USER
 from monitoring.logger import get_logger
 
+from tools.reporting.markdown_exporter import MarkdownExporter
+from tools.reporting.pdf_exporter import PDFExporter
+
 logger = get_logger(__name__)
 
 
@@ -40,6 +43,7 @@ def report_generator_node(state: dict) -> dict:
     total_patches_applied = state.get("total_patches_applied", 0)
     html_source_path      = state.get("html_source_path", "unknown.html")
     ui_context            = state.get("ui_context", "General web UI")
+    audit_results         = state.get("audit_results", [])
 
     original_html_path    = state.get("original_html_path", html_source_path)
 
@@ -110,6 +114,7 @@ def report_generator_node(state: dict) -> dict:
         overall_score=overall_score,
         executive_summary=executive_summary,
         top_recommendations=top_recommendations,
+        audit_results=audit_results,
     )
 
     _save_report(report)
@@ -281,9 +286,20 @@ def _save_report(report: DiagnosticReport) -> None:
     try:
         output_dir = Path(settings.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / f"{report.report_id}.json"
-        out_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
-        logger.info("report_generator.saved", path=str(out_path))
+        
+        # 1. JSON (Primary)
+        json_path = output_dir / f"{report.report_id}.json"
+        json_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        
+        # 2. Markdown
+        md_path = output_dir / f"{report.report_id}.md"
+        MarkdownExporter().export(report, md_path)
+        
+        # 3. PDF
+        pdf_path = output_dir / f"{report.report_id}.pdf"
+        PDFExporter().export(report, pdf_path)
+        
+        logger.info("report_generator.saved_all_formats", report_id=report.report_id)
     except Exception as e:
         logger.error("report_generator.save_failed", error=str(e))
 

@@ -42,10 +42,26 @@ class _SharedBrowser:
         self._cdp_url: Optional[str] = None
         self._ref_count = 0
 
+    def check_health(self) -> bool:
+        """Verify that the Chromium process is still alive and responding to CDP."""
+        if self._proc is None or self._proc.poll() is not None:
+            return False
+        try:
+            # Quick check of the CDP endpoint
+            urllib.request.urlopen(f"{self._cdp_url}/json/version", timeout=0.5)
+            return True
+        except Exception:
+            return False
+
     def get_cdp_url(self) -> str:
-        """Launch the Chromium server if needed, and return its CDP WebSocket URL."""
+        """Launch or restart the Chromium server if needed, and return its CDP URL."""
         with self._lock:
-            if self._proc is None or self._proc.poll() is not None:
+            # Restart if process died or is unresponsive (ChromiumHealthMonitor)
+            if not self.check_health():
+                if self._proc:
+                    logger.warning("shared_browser.unhealthy_detected_restarting")
+                    self.shutdown()
+
                 # 1. Locate the Playwright-bundled Chromium executable
                 with sync_playwright() as p:
                     executable = p.chromium.executable_path
@@ -91,13 +107,19 @@ class _SharedBrowser:
 
     def shutdown(self) -> None:
         """Terminate the background Chromium OS process directly."""
-        with self._lock:
-            if self._proc:
+        if self._proc:
+            try:
                 self._proc.terminate()
-                self._proc = None
-                self._cdp_url = None
-                self._ref_count = 0
-                logger.info("shared_browser.shutdown")
+                self._proc.wait(timeout=2)
+            except Exception:
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+            self._proc = None
+            self._cdp_url = None
+            self._ref_count = 0
+            logger.info("shared_browser.shutdown")
 
 
 _shared_browser = _SharedBrowser()
@@ -539,6 +561,16 @@ class PlaywrightEngine:
                         const cls = el.className.trim().split(/\\s+/)[0];
                         if (cls) selector = el.tagName.toLowerCase()+'.'+cls;
                     }
+                    const computed = window.getComputedStyle(el);
+                    const styles = {
+                        color: computed.color,
+                        backgroundColor: computed.backgroundColor,
+                        fontSize: computed.fontSize,
+                        fontWeight: computed.fontWeight,
+                        display: computed.display,
+                        visibility: computed.visibility,
+                        opacity: computed.opacity,
+                    };
                     out.push({
                         tag:       el.tagName.toLowerCase(),
                         selector:  selector,
@@ -550,6 +582,7 @@ class PlaywrightEngine:
                         ariaLabel: el.getAttribute('aria-label'),
                         bbox: {x:Math.round(rect.x), y:Math.round(rect.y),
                                w:Math.round(rect.width), h:Math.round(rect.height)},
+                        computed_styles: styles,
                     });
                     if (out.length >= 50) return out;
                 }

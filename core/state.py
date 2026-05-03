@@ -63,6 +63,12 @@ class PageContext:
     # ── Per-page error ────────────────────────────────────────────────────
     page_error: Optional[str] = None
 
+    # ── Audit results (axe-core) ──────────────────────────────────────────
+    audit_results: list = field(default_factory=list)
+
+    # ── Design system tokens ──────────────────────────────────────────────
+    design_tokens: dict = field(default_factory=dict)
+
 
 # ---------------------------------------------------------------------------
 # GraphState — top-level LangGraph state

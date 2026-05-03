@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import uuid
 import concurrent.futures
 from pathlib import Path
 
@@ -423,7 +424,7 @@ def _generate_personas(
                 
             merged = {
                 **base_profile,
-                "persona_id": f"persona_{i+1}",
+                "persona_id": f"persona_{i+1}_{uuid.uuid4().hex[:4]}",
                 "task_goal": item.get("task_goal", "Explore the page"),
                 "task_context": item.get("task_context", "Testing UI"),
                 "selection_rationale": item.get("selection_rationale", ""),
