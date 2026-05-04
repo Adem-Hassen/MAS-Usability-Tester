@@ -132,6 +132,7 @@ class SessionStore:
                 await task
             except asyncio.CancelledError:
                 pass
+            self.emit(session_id, EventKind.ERROR, error="Pipeline cancelled by user.")
         self._active_tasks.pop(session_id, None)
 
     async def cancel_all(self):
@@ -356,3 +357,148 @@ class SessionStore:
                 self._queues[session_id].remove(q)
             except (KeyError, ValueError):
                 pass
+
+    # ------------------------------------------------------------------
+    # Stats Retrieval
+    # ------------------------------------------------------------------
+
+    def get_stats_overview(self) -> dict:
+        """Retrieve high-level system overview stats."""
+        DB_PATH = SESSIONS_DIR / "sessions.db"
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            # Total sessions
+            total_sessions = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+            
+            # Active sessions
+            active_sessions = conn.execute("SELECT COUNT(*) FROM sessions WHERE status = ?", (SessionStatus.RUNNING.value,)).fetchone()[0]
+            
+            # Total issues detected (via events)
+            total_issues = conn.execute("SELECT COUNT(*) FROM events WHERE kind = ?", (EventKind.ISSUE.value,)).fetchone()[0]
+            
+            # Total patches generated
+            total_patches = conn.execute("SELECT COUNT(*) FROM events WHERE kind = ?", (EventKind.RECOMMENDER_PATCH.value,)).fetchone()[0]
+            
+            # Total events
+            total_events = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+            
+            # Avg score
+            avg_score = conn.execute("SELECT AVG(CAST(json_extract(results, '$.score_avg') AS FLOAT)) FROM sessions WHERE results IS NOT NULL").fetchone()[0] or 0
+            
+            # Compliance rate (sessions with score > 90)
+            compliant_count = conn.execute("SELECT COUNT(*) FROM sessions WHERE results IS NOT NULL AND CAST(json_extract(results, '$.score_avg') AS FLOAT) >= 90").fetchone()[0]
+            compliance_rate = (compliant_count / total_sessions * 100) if total_sessions > 0 else 100
+            
+            return {
+                "total_evaluations": total_sessions,
+                "active_sessions": active_sessions,
+                "total_issues": total_issues,
+                "total_patches": total_patches,
+                "total_events": total_events,
+                "avg_score": round(avg_score, 1),
+                "compliance_rate": round(compliance_rate, 1)
+            }
+        finally:
+            conn.close()
+
+    def get_evaluation_stats(self) -> dict:
+        """Retrieve detailed evaluation/session stats."""
+        DB_PATH = SESSIONS_DIR / "sessions.db"
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            # Status breakdown
+            rows = conn.execute("SELECT status, COUNT(*) FROM sessions GROUP BY status").fetchall()
+            status_breakdown = {r[0]: r[1] for r in rows}
+            
+            # Avg duration
+            avg_duration = conn.execute("""
+                SELECT AVG(strftime('%s', finished_at) - strftime('%s', started_at)) 
+                FROM sessions 
+                WHERE finished_at IS NOT NULL AND started_at IS NOT NULL
+            """).fetchone()[0] or 0
+            
+            # Recent scores (last 10)
+            recent_scores = conn.execute("""
+                SELECT session_id, CAST(json_extract(results, '$.score_avg') AS FLOAT) as score, created_at 
+                FROM sessions 
+                WHERE results IS NOT NULL 
+                ORDER BY created_at DESC 
+                LIMIT 10
+            """).fetchall()
+            
+            return {
+                "status_breakdown": status_breakdown,
+                "avg_duration_seconds": round(avg_duration, 1),
+                "recent_scores": [{"id": r[0], "score": r[1], "ts": r[2]} for r in recent_scores]
+            }
+        finally:
+            conn.close()
+
+    def get_persona_stats(self) -> dict:
+        """Retrieve stats about persona activity."""
+        DB_PATH = SESSIONS_DIR / "sessions.db"
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            # Total persona actions
+            total_actions = conn.execute("SELECT COUNT(*) FROM events WHERE kind = ?", (EventKind.PERSONA_ACTION.value,)).fetchone()[0]
+            
+            # Total personas started
+            total_personas = conn.execute("SELECT COUNT(*) FROM events WHERE kind = ?", (EventKind.PERSONA_START.value,)).fetchone()[0]
+            
+            # Actions per persona (avg)
+            avg_actions = (total_actions / total_personas) if total_personas > 0 else 0
+            
+            # Most common actions
+            rows = conn.execute("""
+                SELECT json_extract(payload, '$.action') as action_type, COUNT(*) as count 
+                FROM events 
+                WHERE kind = ? 
+                GROUP BY action_type 
+                ORDER BY count DESC 
+                LIMIT 5
+            """, (EventKind.PERSONA_ACTION.value,)).fetchall()
+            common_actions = {r[0]: r[1] for r in rows if r[0]}
+            
+            return {
+                "total_personas": total_personas,
+                "total_actions": total_actions,
+                "avg_actions_per_persona": round(avg_actions, 1),
+                "common_actions": common_actions
+            }
+        finally:
+            conn.close()
+
+    def get_recommendation_stats(self) -> dict:
+        """Retrieve stats about recommendations and conflicts."""
+        DB_PATH = SESSIONS_DIR / "sessions.db"
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            total_patches = conn.execute("SELECT COUNT(*) FROM events WHERE kind = ?", (EventKind.RECOMMENDER_PATCH.value,)).fetchone()[0]
+            total_conflicts = conn.execute("SELECT COUNT(*) FROM events WHERE kind = ?", (EventKind.CONFLICT_DETECTED.value,)).fetchone()[0]
+            resolved_conflicts = conn.execute("SELECT COUNT(*) FROM events WHERE kind = ?", (EventKind.CONFLICT_RESOLVED.value,)).fetchone()[0]
+            applied_patches = conn.execute("SELECT COUNT(*) FROM events WHERE kind = ?", (EventKind.PATCH_APPLIED.value,)).fetchone()[0]
+            
+            return {
+                "total_patches": total_patches,
+                "applied_patches": applied_patches,
+                "total_conflicts": total_conflicts,
+                "resolved_conflicts": resolved_conflicts,
+                "resolution_rate": (resolved_conflicts / total_conflicts * 100) if total_conflicts > 0 else 100
+            }
+        finally:
+            conn.close()
+
+    def get_active_session(self) -> Optional[Session]:
+        """Retrieve the currently running session if any."""
+        DB_PATH = SESSIONS_DIR / "sessions.db"
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE status = ? ORDER BY started_at DESC LIMIT 1",
+                (SessionStatus.RUNNING.value,)
+            ).fetchone()
+            if not row:
+                return None
+            return self._row_to_session(row)
+        finally:
+            conn.close()

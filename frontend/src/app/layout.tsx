@@ -21,11 +21,12 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Nexus Accessibility Evaluator",
+  title: "VerSimUX",
   description: "Automated UI accessibility evaluation and repair system",
 };
 
 import { PipelineProvider } from "@/context/PipelineContext";
+import { NotificationStack } from "@/components/ui";
 
 export default function RootLayout({
   children,
@@ -38,6 +39,7 @@ export default function RootLayout({
         className={`${syne.variable} ${dmSans.variable} ${jetbrainsMono.variable} font-sans bg-nexus-bg text-white antialiased`}
       >
         <PipelineProvider>
+          <NotificationStack />
           {children}
         </PipelineProvider>
       </body>

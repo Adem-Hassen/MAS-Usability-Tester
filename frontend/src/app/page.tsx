@@ -7,7 +7,7 @@ import { usePipeline } from '@/hooks/usePipeline';
 import { Sidebar, Header } from '@/components/layout';
 import { MetricCard, SectionLabel, Button, Card, Badge, StatusDot } from '@/components/ui';
 import { Upload, Play, Clock, ArrowRight, ShieldCheck, AlertCircle, Zap } from 'lucide-react';
-import { getHistory } from '@/lib/api';
+import { getHistory, getStatsOverview, getStatsEvaluations } from '@/lib/api';
 import clsx from 'clsx';
 
 export default function DashboardPage() {
@@ -15,17 +15,27 @@ export default function DashboardPage() {
   const { upload, state } = usePipeline();
   const [uploading, setUploading] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>(null);
+  const [evalStats, setEvalStats] = useState<any>(null);
 
   useEffect(() => {
     async function load() {
       try {
-        const data = await getHistory();
-        setHistory(data.slice(0, 10)); // Just the 10 most recent
+        const [historyData, statsData, evalData] = await Promise.all([
+          getHistory(),
+          getStatsOverview(),
+          getStatsEvaluations()
+        ]);
+        setHistory(historyData.slice(0, 10));
+        setStats(statsData);
+        setEvalStats(evalData);
       } catch (e) {
         console.error(e);
       }
     }
     load();
+    const interval = setInterval(load, 30000); // Refresh every 30s
+    return () => clearInterval(interval);
   }, []);
 
   const onDrop = useCallback(async (accepted: File[]) => {
@@ -64,33 +74,47 @@ export default function DashboardPage() {
               <h1 className="text-3xl font-syne font-bold tracking-tight">GLOBAL HEALTH</h1>
               <span className="text-nexus-outline font-mono text-sm">/ System Overview</span>
             </div>
-            <div className="flex items-center gap-2 bg-nexus-secondary/10 border border-nexus-secondary/20 px-3 py-1">
-              <StatusDot status="done" className="!w-1.5 !h-1.5" />
-              <span className="text-[10px] font-bold text-nexus-secondary uppercase tracking-widest">SYSTEM LIVE</span>
+            <div className="flex items-center gap-4">
+              {state.status === 'running' && (
+                <Button 
+                  variant="primary" 
+                  className="!py-1 !px-4 text-[10px] gap-2 animate-pulse"
+                  onClick={() => router.push(`/evaluate/${state.jobId}`)}
+                >
+                  <Play size={14} fill="currentColor" />
+                  RESUME LIVE SESSION
+                </Button>
+              )}
+              <div className="flex items-center gap-2 bg-nexus-secondary/10 border border-nexus-secondary/20 px-3 py-1">
+                <StatusDot status="done" className="!w-1.5 !h-1.5" />
+                <span className="text-[10px] font-bold text-nexus-secondary uppercase tracking-widest">SYSTEM LIVE</span>
+              </div>
             </div>
           </div>
 
-          {/* Metrics Row */}
           <div className="grid grid-cols-3 gap-6">
             <MetricCard 
               label="Compliance Rate" 
-              value="94.2%" 
+              value={`${stats?.compliance_rate ?? '0'}%`} 
               variant="secondary"
               trend={{ value: "+2.4%", type: 'positive' }}
               subtext="vs last 30 days"
+              isLoading={!stats}
             />
             <MetricCard 
-              label="Critical Issues" 
-              value="12" 
+              label="Detected Issues" 
+              value={stats?.total_issues ?? '0'} 
               variant="error"
               trend={{ value: "-4", type: 'positive' }}
-              subtext="Resolved today"
+              subtext="Total found across all runs"
+              isLoading={!stats}
             />
             <MetricCard 
-              label="Avg. Response" 
-              value="1.2s" 
+              label="Avg. Duration" 
+              value={`${evalStats?.avg_duration_seconds ?? '0'}s`} 
               variant="primary"
-              subtext="Per Persona Simulation"
+              subtext="Per Evaluation Session"
+              isLoading={!evalStats}
             />
           </div>
 
@@ -102,7 +126,6 @@ export default function DashboardPage() {
               <Card className="h-full flex flex-col">
                 <div className="mb-6 flex items-center justify-between">
                   <SectionLabel className="mb-0">Component Analyzer</SectionLabel>
-                  <Badge variant="primary" className="!rounded-none">BETA</Badge>
                 </div>
 
                 <div 
@@ -133,39 +156,88 @@ export default function DashboardPage() {
             {/* Quick Stats / Info */}
             <div className="col-span-4 space-y-6">
               <Card variant="elevated" className="space-y-4">
-                <SectionLabel>Real-time Progress</SectionLabel>
+                <SectionLabel>System Activity</SectionLabel>
                 <div className="space-y-6">
-                  {[
-                    { label: 'UI Analysis', status: 'done', icon: ShieldCheck },
-                    { label: 'Persona Simulations', status: 'running', icon: Play },
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-nexus-outline uppercase font-bold tracking-tight">Active Sessions</span>
+                    <Badge variant={stats?.active_sessions > 0 ? 'primary' : 'neutral'}>
+                      {stats?.active_sessions ?? '0'} RUNNING
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-nexus-outline uppercase font-bold tracking-tight">Success Rate</span>
+                    <span className="text-sm font-mono font-bold text-nexus-secondary">
+                      {stats?.total_evaluations > 0 
+                        ? `${Math.round(((evalStats?.status_breakdown?.done ?? 0) / stats.total_evaluations) * 100)}%` 
+                        : '100%'}
+                    </span>
+                  </div>
+                </div>
+              </Card>
+
+              <Card variant="elevated" className="space-y-4">
+                <SectionLabel>Live Pipeline</SectionLabel>
+                <div className="space-y-6">
+                  {(state.status === 'running' ? state.steps.slice(0, 4) : [
+                    { label: 'UI Analysis', status: 'idle', icon: ShieldCheck },
+                    { label: 'Persona Simulations', status: 'idle', icon: Play },
                     { label: 'Issue Clustering', status: 'idle', icon: AlertCircle },
                     { label: 'Patch Generation', status: 'idle', icon: Zap },
-                  ].map((step, i) => (
-                    <div key={i} className="flex items-center gap-4">
-                      <div className={clsx(
-                        "w-8 h-8 flex items-center justify-center border",
-                        step.status === 'done' ? "bg-nexus-secondary/10 border-nexus-secondary/20 text-nexus-secondary" :
-                        step.status === 'running' ? "bg-nexus-primary/10 border-nexus-primary/20 text-nexus-primary" :
-                        "bg-nexus-surface border-nexus-outline-variant text-nexus-outline"
-                      )}>
-                        <step.icon size={16} />
-                      </div>
-                      <div className="flex-1">
-                        <div className="text-xs font-bold uppercase tracking-wider">{step.label}</div>
-                        <div className="text-[10px] text-nexus-outline font-mono">
-                          {step.status === 'done' ? 'Completed' : step.status === 'running' ? 'In Progress' : 'Queued'}
+                  ]).map((step: any, i) => {
+                    const Icon = step.icon || (i === 0 ? ShieldCheck : i === 1 ? Play : i === 2 ? AlertCircle : Zap);
+                    return (
+                      <div key={i} className="flex items-center gap-4 transition-all duration-500">
+                        <div className={clsx(
+                          "w-8 h-8 flex items-center justify-center border transition-colors duration-500",
+                          step.status === 'done' ? "bg-nexus-secondary/10 border-nexus-secondary/20 text-nexus-secondary" :
+                          step.status === 'running' ? "bg-nexus-primary/10 border-nexus-primary/20 text-nexus-primary" :
+                          "bg-nexus-surface border-nexus-outline-variant text-nexus-outline"
+                        )}>
+                          <Icon size={16} className={step.status === 'running' ? 'animate-pulse' : ''} />
                         </div>
+                        <div className="flex-1">
+                          <div className="text-xs font-bold uppercase tracking-wider">{step.label}</div>
+                          <div className="text-[10px] text-nexus-outline font-mono">
+                            {step.status === 'done' ? 'Completed' : step.status === 'running' ? 'In Progress' : 'Queued'}
+                          </div>
+                        </div>
+                        {step.status === 'running' && <StatusDot status="running" />}
                       </div>
-                      {step.status === 'running' && <StatusDot status="running" />}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
+                {state.status === 'running' && (
+                  <div className="pt-2 space-y-4">
+                    <div>
+                      <div className="flex justify-between text-[10px] font-mono mb-1">
+                        <span>{state.progressLabel}</span>
+                        <span>{state.progress}%</span>
+                      </div>
+                      <div className="h-1 bg-nexus-surface-variant overflow-hidden">
+                        <div 
+                          className="h-full bg-nexus-primary transition-all duration-1000 ease-out" 
+                          style={{ width: `${state.progress}%` }} 
+                        />
+                      </div>
+                    </div>
+                    <Button 
+                      variant="secondary" 
+                      className="w-full !py-2 text-[10px] gap-2 hover:bg-nexus-primary/20 hover:text-nexus-primary transition-all"
+                      onClick={() => router.push(`/evaluate/${state.jobId}`)}
+                    >
+                      <ArrowRight size={14} />
+                      GO TO SESSION CONTROL
+                    </Button>
+                  </div>
+                )}
               </Card>
 
               <Card className="bg-nexus-primary/5 border-nexus-primary/20 flex flex-col items-center justify-center p-8 text-center">
                 <Clock className="text-nexus-primary mb-4" size={24} />
-                <div className="text-sm font-bold uppercase tracking-widest mb-1">Total Uptime</div>
-                <div className="text-2xl font-syne font-bold">142:04:12</div>
+                <div className="text-sm font-bold uppercase tracking-widest mb-1">Total Events</div>
+                <div className="text-2xl font-syne font-bold animate-in fade-in duration-1000">
+                  {stats?.total_events?.toLocaleString() ?? '0'}
+                </div>
               </Card>
             </div>
 
@@ -190,7 +262,13 @@ export default function DashboardPage() {
                     <tr 
                       key={i} 
                       className="hover:bg-nexus-surface-variant/30 transition-colors cursor-pointer group"
-                      onClick={() => router.push(`/evaluate/${row.job_id}/report`)}
+                      onClick={() => {
+                        if (row.status === 'running' || row.status === 'queued') {
+                          router.push(`/evaluate/${row.job_id}`);
+                        } else {
+                          router.push(`/evaluate/${row.job_id}/report`);
+                        }
+                      }}
                     >
                       <td className="px-6 py-4 font-mono text-xs">{row.job_id}</td>
                       <td className="px-6 py-4">

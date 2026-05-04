@@ -26,6 +26,7 @@ from agents.supervisor.supervisor_agent import (
 )
 from agents.persona.persona_agent          import persona_node          as _persona_node
 from agents.persona.playwright_engine      import shutdown_shared_browser
+from agents.persona.request_pool           import PersonaAsyncRequestPool
 from tools.analysis.cluster_engine         import clustering_node       as _clustering_node
 from agents.recommender.recommender_agent  import recommender_node      as _recommender_node
 from agents.recommender.conflict_resolver  import conflict_resolver_node as _conflict_node
@@ -270,7 +271,12 @@ def _run_simulations(ctx: PageContext, outer_state: dict) -> PageContext:
     flat          = _ctx_to_flat(ctx)
     page_name     = Path(ctx.html_source_path).name
     all_results   = []
-    max_workers   = min(len(ctx.personas), getattr(settings, "llm_max_concurrent_calls", 5))
+    
+    # Initialize the shared async request pool for the Persona Swarm
+    pool = PersonaAsyncRequestPool(
+        keys=settings.persona_api_key.split(","),
+        max_concurrent_per_key=getattr(settings, "llm_max_concurrent_calls", 5)
+    )
 
     def _run_one(persona):
         persona_state = {
@@ -280,11 +286,13 @@ def _run_simulations(ctx: PageContext, outer_state: dict) -> PageContext:
             "simulation_results": [],
             "patch_proposals":    [],
             "swarm_claims":       [],
+            "persona_pool":       pool,
         }
         return _persona_node(persona_state)
 
-    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
-        futures = {pool.submit(_run_one, p): p for p in ctx.personas}
+    # Let the pool manage LLM rate limits, so we can run all personas concurrently
+    with ThreadPoolExecutor(max_workers=max(1, len(ctx.personas))) as tp:
+        futures = {tp.submit(_run_one, p): p for p in ctx.personas}
         for future in as_completed(futures):
             persona = futures[future]
             try:
@@ -300,6 +308,8 @@ def _run_simulations(ctx: PageContext, outer_state: dict) -> PageContext:
                 logger.error("page_pipeline.persona_error",
                              persona=persona.persona_id, error=str(e))
 
+    pool.stop()
+    
     ctx = copy.copy(ctx)
     ctx.simulation_results = all_results
     return ctx

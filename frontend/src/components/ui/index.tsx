@@ -138,13 +138,14 @@ export function SectionLabel({ children, className }: { children: React.ReactNod
 
 // ── Metric Card ───────────────────────────────────────────────────────────────
 export function MetricCard({ 
-  label, value, subtext, trend, variant = 'base' 
+  label, value, subtext, trend, variant = 'base', isLoading = false
 }: { 
   label: string; 
   value: string | number; 
   subtext?: string; 
   trend?: { value: string; type: 'positive' | 'negative' | 'neutral' };
-  variant?: 'primary' | 'secondary' | 'error' | 'base'
+  variant?: 'primary' | 'secondary' | 'error' | 'base';
+  isLoading?: boolean;
 }) {
   const accentColor = {
     primary: 'border-t-nexus-primary',
@@ -154,24 +155,95 @@ export function MetricCard({
   }[variant];
 
   return (
-    <Card className={clsx('flex flex-col gap-1 border-t-2', accentColor)}>
+    <Card className={clsx('flex flex-col gap-1 border-t-2 overflow-hidden relative', accentColor)}>
       <SectionLabel className="mb-1">{label}</SectionLabel>
-      <div className="text-3xl font-syne font-bold">{value}</div>
+      
+      {isLoading ? (
+        <div className="h-9 w-24 bg-nexus-surface-variant animate-pulse" />
+      ) : (
+        <div key={String(value)} className="text-3xl font-syne font-bold animate-in fade-in slide-in-from-bottom-1 duration-500">
+          {value}
+        </div>
+      )}
+
       {(subtext || trend) && (
         <div className="flex items-center gap-2 mt-2">
-          {trend && (
-            <span className={clsx(
-              'text-[10px] font-bold px-1.5 py-0.5 rounded-none',
-              trend.type === 'positive' && 'bg-nexus-secondary/10 text-nexus-secondary',
-              trend.type === 'negative' && 'bg-nexus-error/10 text-nexus-error',
-              trend.type === 'neutral' && 'bg-nexus-outline/10 text-nexus-outline',
-            )}>
-              {trend.value}
-            </span>
+          {isLoading ? (
+            <div className="h-4 w-32 bg-nexus-surface-variant animate-pulse" />
+          ) : (
+            <>
+              {trend && (
+                <span className={clsx(
+                  'text-[10px] font-bold px-1.5 py-0.5 rounded-none',
+                  trend.type === 'positive' && 'bg-nexus-secondary/10 text-nexus-secondary',
+                  trend.type === 'negative' && 'bg-nexus-error/10 text-nexus-error',
+                  trend.type === 'neutral' && 'bg-nexus-outline/10 text-nexus-outline',
+                )}>
+                  {trend.value}
+                </span>
+              )}
+              {subtext && <span className="text-[10px] text-nexus-outline uppercase font-bold tracking-tight">{subtext}</span>}
+            </>
           )}
-          {subtext && <span className="text-[10px] text-nexus-outline uppercase font-bold tracking-tight">{subtext}</span>}
         </div>
       )}
     </Card>
+  );
+}
+// ── Notification / Toast ──────────────────────────────────────────────────────
+import { X, CheckCircle, AlertTriangle, Info as InfoIcon } from 'lucide-react';
+import { usePipeline } from '@/hooks/usePipeline';
+
+export function NotificationStack() {
+  const { state, dismissNotification } = usePipeline();
+
+  if (state.notifications.length === 0) return null;
+
+  return (
+    <div className="fixed top-6 right-6 z-[9999] flex flex-col gap-4 w-96 pointer-events-none">
+      {state.notifications.map((n) => (
+        <Toast key={n.id} notification={n} onDismiss={() => dismissNotification(n.id)} />
+      ))}
+    </div>
+  );
+}
+
+function Toast({ notification, onDismiss }: { notification: any, onDismiss: () => void }) {
+  const { type, title, message } = notification;
+
+  const Icon = {
+    success: CheckCircle,
+    error: AlertTriangle,
+    info: InfoIcon
+  }[type as 'success' | 'error' | 'info'] || InfoIcon;
+
+  const typeStyles = {
+    success: 'border-l-nexus-secondary bg-nexus-secondary/10',
+    error: 'border-l-nexus-error bg-nexus-error/10',
+    info: 'border-l-nexus-primary bg-nexus-primary/10'
+  }[type as 'success' | 'error' | 'info'] || 'border-l-nexus-outline bg-nexus-surface-variant';
+
+  return (
+    <div className={clsx(
+      'pointer-events-auto flex items-start gap-4 p-4 border-l-4 border border-nexus-outline-variant backdrop-blur-md animate-in slide-in-from-right-full duration-300',
+      typeStyles
+    )}>
+      <div className={clsx(
+        'mt-0.5',
+        type === 'success' ? 'text-nexus-secondary' : type === 'error' ? 'text-nexus-error' : 'text-nexus-primary'
+      )}>
+        <Icon size={18} />
+      </div>
+      <div className="flex-1 space-y-1">
+        <div className="text-sm font-bold uppercase tracking-wider">{title}</div>
+        <div className="text-xs text-nexus-outline line-clamp-2">{message}</div>
+      </div>
+      <button 
+        onClick={onDismiss}
+        className="text-nexus-outline hover:text-white transition-colors"
+      >
+        <X size={16} />
+      </button>
+    </div>
   );
 }

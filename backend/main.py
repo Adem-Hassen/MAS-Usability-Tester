@@ -265,6 +265,39 @@ async def get_history():
         for s in sessions
     ]
 
+@app.get("/api/v1/stats/overview")
+async def get_stats_overview():
+    """Retrieve high-level system overview stats."""
+    return store.get_stats_overview()
+
+@app.get("/api/v1/stats/evaluations")
+async def get_stats_evaluations():
+    """Retrieve detailed evaluation/session stats."""
+    return store.get_evaluation_stats()
+
+@app.get("/api/v1/stats/personas")
+async def get_stats_personas():
+    """Retrieve stats about persona activity."""
+    return store.get_persona_stats()
+
+@app.get("/api/v1/stats/recommendations")
+async def get_stats_recommendations():
+    """Retrieve stats about recommendations and conflicts."""
+    return store.get_recommendation_stats()
+
+@app.get("/api/v1/active-run")
+async def get_active_run():
+    """Retrieve the currently active session if any."""
+    session = store.get_active_session()
+    if not session:
+        return {"job_id": None}
+    return {"job_id": session.session_id}
+
+@app.get("/api/v1/evaluate/{job_id}/events")
+async def get_job_events(job_id: str, after_id: int = -1):
+    """Retrieve historical events for a job to restore state."""
+    return store.get_events(job_id, after_id)
+
 @app.get("/api/v1/health")
 async def health_v1():
     """Health check with model and token info."""
@@ -427,7 +460,7 @@ async def download_report(session_id: str):
 
 @app.get("/api/v1/settings")
 async def get_settings():
-    """Retrieve current system settings (masking API keys)."""
+    """Retrieve system settings (read-only)."""
     from config.settings import settings as s
     return {
         "supervisor_model": s.supervisor_llm_model,
@@ -435,24 +468,9 @@ async def get_settings():
         "recommender_model": s.recommender_llm_model,
         "max_personas": s.max_num_personas,
         "max_steps": s.persona_max_steps,
-        "headless": s.persona_headless,
-        "save_traces": s.save_action_traces,
-        # Mask keys for security
         "has_supervisor_key": bool(s.supervisor_api_key),
         "has_persona_key": bool(s.persona_api_key),
     }
-
-@app.post("/api/v1/settings")
-async def update_settings(payload: dict):
-    """Update system settings (limited set for now)."""
-    from config.settings import settings as s
-    if "max_personas" in payload:
-        s.max_num_personas = payload["max_personas"]
-    if "max_steps" in payload:
-        s.persona_max_steps = payload["max_steps"]
-    if "headless" in payload:
-        s.persona_headless = payload["headless"]
-    return {"status": "updated"}
 
 @app.get("/api/health")
 async def health():

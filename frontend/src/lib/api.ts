@@ -137,21 +137,50 @@ export async function getHistory(): Promise<any[]> {
 }
 
 /**
+ * Stats
+ */
+export async function getStatsOverview() {
+  const res = await fetch(`${BASE}/v1/stats/overview`);
+  if (!res.ok) throw new Error(`Failed to fetch stats overview (${res.status})`);
+  return res.json();
+}
+
+export async function getStatsEvaluations() {
+  const res = await fetch(`${BASE}/v1/stats/evaluations`);
+  if (!res.ok) throw new Error(`Failed to fetch evaluation stats (${res.status})`);
+  return res.json();
+}
+
+export async function getStatsPersonas() {
+  const res = await fetch(`${BASE}/v1/stats/personas`);
+  if (!res.ok) throw new Error(`Failed to fetch persona stats (${res.status})`);
+  return res.json();
+}
+
+export async function getStatsRecommendations() {
+  const res = await fetch(`${BASE}/v1/stats/recommendations`);
+  if (!res.ok) throw new Error(`Failed to fetch recommendation stats (${res.status})`);
+  return res.json();
+}
+
+export async function getActiveRun(): Promise<{ job_id: string | null }> {
+  const res = await fetch(`${BASE}/v1/active-run`);
+  if (!res.ok) throw new Error(`Failed to fetch active run (${res.status})`);
+  return res.json();
+}
+
+export async function getJobEvents(jobId: string, afterId: number = -1): Promise<any[]> {
+  const res = await fetch(`${BASE}/v1/evaluate/${jobId}/events?after_id=${afterId}`);
+  if (!res.ok) throw new Error(`Failed to fetch job events (${res.status})`);
+  return res.json();
+}
+
+/**
  * Settings
  */
 export async function getSettings() {
   const res = await fetch(`${BASE}/v1/settings`);
   if (!res.ok) throw new Error(`Failed to fetch settings (${res.status})`);
-  return res.json();
-}
-
-export async function updateSettings(settings: Record<string, any>) {
-  const res = await fetch(`${BASE}/v1/settings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(settings),
-  });
-  if (!res.ok) throw new Error(`Failed to update settings (${res.status})`);
   return res.json();
 }
 

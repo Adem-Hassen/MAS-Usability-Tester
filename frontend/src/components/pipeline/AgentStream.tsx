@@ -101,24 +101,25 @@ export default function AgentStream({ logs, isRunning, activeAgents }: AgentStre
         )}
       </div>
 
-      {/* Active Persona Mini-Monitors (Footer) */}
-      <div className="px-4 py-3 border-t border-white/5 bg-[#080808] grid grid-cols-3 xl:grid-cols-4 gap-3">
-        {displayAgents.map((name, i) => (
-          <div key={i} className="flex items-center gap-2 p-1.5 border border-white/5 bg-white/[0.02]">
-            <div className="w-6 h-6 shrink-0 bg-black border border-white/10 flex items-center justify-center">
-              <User size={12} className={i === 0 ? "text-nexus-primary" : "text-nexus-outline/40"} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-[8px] font-bold uppercase text-nexus-outline truncate tracking-tight">{name}</div>
-              <div className="text-[9px] font-mono text-nexus-secondary flex items-center gap-1 opacity-70">
-                <span className="w-1 h-1 rounded-full bg-nexus-secondary animate-pulse" />
-                <span className="truncate">Active</span>
+      {/* Active Persona Mini-Monitors (Footer) - Now scrollable and more compact */}
+      <div className="px-4 py-2 border-t border-white/5 bg-[#080808]">
+        <div className="flex flex-wrap gap-2 max-h-[80px] overflow-y-auto scrollbar-none">
+          {displayAgents.map((name, i) => (
+            <div key={i} className="flex items-center gap-2 p-1 px-2 border border-white/5 bg-white/[0.02] min-w-[120px] max-w-[150px]">
+              <div className="w-5 h-5 shrink-0 bg-black border border-white/10 flex items-center justify-center">
+                <User size={10} className={i === 0 ? "text-nexus-primary" : "text-nexus-outline/40"} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[8px] font-bold uppercase text-nexus-outline truncate tracking-tight">{name}</div>
+                <div className="text-[7px] font-mono text-nexus-secondary flex items-center gap-1 opacity-70">
+                  <span className="w-1 h-1 rounded-full bg-nexus-secondary animate-pulse" />
+                  <span className="truncate">LIVE</span>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
-  
   );
 }

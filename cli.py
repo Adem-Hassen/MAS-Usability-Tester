@@ -30,7 +30,7 @@ def main():
     settings.output_dir = args.output
     settings.persona_headless = args.headless
     settings.max_correction_loops = args.loops
-    settings.persona_count_per_page = args.personas
+    settings.max_num_personas = args.personas
 
     input_paths = []
     for p in args.paths:

@@ -2,16 +2,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { Sidebar, Header } from '@/components/layout';
-import { SectionLabel, Card, Button, Badge } from '@/components/ui';
-import { Settings as SettingsIcon, Save, Shield, Cpu, Sliders, CheckCircle2 } from 'lucide-react';
-import { getSettings, updateSettings } from '@/lib/api';
+import { SectionLabel, Card, Badge } from '@/components/ui';
+import { Shield, Cpu, Sliders } from 'lucide-react';
+import { getSettings } from '@/lib/api';
 import clsx from 'clsx';
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [success, setSuccess] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -26,20 +24,6 @@ export default function SettingsPage() {
     }
     load();
   }, []);
-
-  const handleSave = async () => {
-    setSaving(true);
-    setSuccess(false);
-    try {
-      await updateSettings(settings);
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -62,15 +46,10 @@ export default function SettingsPage() {
               <h1 className="text-3xl font-syne font-bold tracking-tight">SYSTEM SETTINGS</h1>
               <span className="text-nexus-outline font-mono text-sm">/ Configuration</span>
             </div>
-            <Button 
-              variant="primary" 
-              className="gap-2 min-w-[120px]" 
-              onClick={handleSave}
-              disabled={saving}
-            >
-              {success ? <CheckCircle2 size={16} /> : <Save size={16} />}
-              {saving ? 'SAVING...' : success ? 'SAVED' : 'SAVE CHANGES'}
-            </Button>
+            <div className="flex items-center gap-2 px-4 py-2 border border-nexus-outline-variant bg-nexus-surface-variant/20">
+              <Shield size={14} className="text-nexus-secondary" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-nexus-outline">Locked by .env</span>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-8">
@@ -93,14 +72,9 @@ export default function SettingsPage() {
                         <div className="text-sm font-bold uppercase tracking-wider">{item.label}</div>
                         <div className="text-xs text-nexus-outline">{item.desc}</div>
                       </div>
-                      <select 
-                        className="bg-nexus-surface border border-nexus-outline-variant text-xs font-mono p-2 focus:border-nexus-primary outline-none"
-                        value={settings[item.key]}
-                        onChange={(e) => setSettings({ ...settings, [item.key]: e.target.value })}
-                        disabled
-                      >
-                        <option>{settings[item.key]}</option>
-                      </select>
+                      <div className="bg-nexus-surface border border-nexus-outline-variant text-[10px] font-mono px-3 py-1.5 text-nexus-primary uppercase font-bold">
+                        {settings[item.key]}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -117,14 +91,12 @@ export default function SettingsPage() {
                 <Card variant="elevated" className="space-y-4">
                   <div className="text-xs font-bold uppercase tracking-wider">Persona Density</div>
                   <div className="flex items-center justify-between">
-                    <input 
-                      type="range" 
-                      min="1" 
-                      max="10" 
-                      value={settings.max_personas}
-                      onChange={(e) => setSettings({ ...settings, max_personas: parseInt(e.target.value) })}
-                      className="flex-1 accent-nexus-secondary"
-                    />
+                    <div className="flex-1 h-1.5 bg-nexus-surface-variant relative overflow-hidden">
+                      <div 
+                        className="absolute h-full bg-nexus-secondary" 
+                        style={{ width: `${(settings.max_personas / 10) * 100}%` }} 
+                      />
+                    </div>
                     <span className="ml-4 font-mono text-lg font-bold text-nexus-secondary">{settings.max_personas}</span>
                   </div>
                   <p className="text-[10px] text-nexus-outline">Number of unique persona agents spawned per page audit.</p>
@@ -133,14 +105,12 @@ export default function SettingsPage() {
                 <Card variant="elevated" className="space-y-4">
                   <div className="text-xs font-bold uppercase tracking-wider">Step Limit</div>
                   <div className="flex items-center justify-between">
-                    <input 
-                      type="range" 
-                      min="5" 
-                      max="30" 
-                      value={settings.max_steps}
-                      onChange={(e) => setSettings({ ...settings, max_steps: parseInt(e.target.value) })}
-                      className="flex-1 accent-nexus-primary"
-                    />
+                    <div className="flex-1 h-1.5 bg-nexus-surface-variant relative overflow-hidden">
+                      <div 
+                        className="absolute h-full bg-nexus-primary" 
+                        style={{ width: `${(settings.max_steps / 30) * 100}%` }} 
+                      />
+                    </div>
                     <span className="ml-4 font-mono text-lg font-bold text-nexus-primary">{settings.max_steps}</span>
                   </div>
                   <p className="text-[10px] text-nexus-outline">Maximum interaction steps allowed per persona simulation.</p>
@@ -173,7 +143,9 @@ export default function SettingsPage() {
                     {settings.has_persona_key ? "ACTIVE" : "MISSING"}
                   </Badge>
                 </div>
-                <p className="text-[10px] text-nexus-outline italic">API keys are managed via system environment variables for maximum security.</p>
+                <p className="text-[10px] text-nexus-outline italic text-center pt-2">
+                  System configuration is locked to .env parameters to ensure environment consistency.
+                </p>
               </Card>
             </section>
 

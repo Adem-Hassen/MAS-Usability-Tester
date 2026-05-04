@@ -20,9 +20,6 @@ export function Sidebar({ isCollapsed, onToggle }: { isCollapsed?: boolean; onTo
   const { reset } = usePipeline();
 
   const handleNav = (href: string) => {
-    if (href === '/') {
-      reset();
-    }
     router.push(href);
   };
 
@@ -40,7 +37,7 @@ export function Sidebar({ isCollapsed, onToggle }: { isCollapsed?: boolean; onTo
         onClick={() => handleNav('/')}
       >
         <div className="w-6 h-6 bg-nexus-primary rounded-none shrink-0" />
-        {!isCollapsed && <span className="font-syne font-bold text-lg tracking-tight whitespace-nowrap">NEXUS</span>}
+        {!isCollapsed && <span className="font-syne font-bold text-lg tracking-tight whitespace-nowrap">VerSimUX</span>}
       </div>
 
       {/* Nav */}
@@ -103,8 +100,11 @@ export function Header({ isSidebarCollapsed }: { isSidebarCollapsed?: boolean })
   const { reset } = usePipeline();
 
   const handleNew = () => {
-    reset();
-    router.push('/');
+    // Only reset if they specifically click "New Evaluation" and want to start fresh
+    if (window.confirm("Start a new evaluation? Current active session state will be cleared.")) {
+      reset();
+      router.push('/');
+    }
   };
 
   return (

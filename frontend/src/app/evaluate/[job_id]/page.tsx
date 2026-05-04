@@ -96,12 +96,12 @@ export default function EvaluatePage() {
 
           {/* Panel 2: Agent Stream & Live Preview (Center) */}
           <div className="flex-1 flex flex-col min-w-0 border-r border-nexus-outline-variant bg-nexus-surface/5 overflow-hidden">
-            {/* Live Simulation View - Now more compact vertically */}
-            <div className="p-4 border-b border-nexus-outline-variant bg-nexus-bg/50 shrink-0">
+            {/* Live Simulation View - Now with flex-1 and scroll support */}
+            <div className="flex-[0.6] min-h-[300px] p-4 border-b border-nexus-outline-variant bg-nexus-bg/50 overflow-hidden flex flex-col">
               <LivePreviewPanel />
             </div>
             
-            <div className="flex-1 min-h-0">
+            <div className="flex-[0.4] min-h-[200px] flex flex-col">
               <AgentStream 
                 logs={state.logs}
                 isRunning={isRunning}

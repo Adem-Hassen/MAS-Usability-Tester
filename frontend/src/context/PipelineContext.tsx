@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useCallback, useRef, useState, useEffect } from 'react';
-import { evaluate, streamEvaluate, getResults } from '@/lib/api';
+import { evaluate, streamEvaluate, getResults, getActiveRun, getJobEvents } from '@/lib/api';
 import type {
   SessionStatus, ConnectionStatus, StreamEvent,
   PipelineStep, Issue, Patch, SessionResults,
@@ -49,6 +49,7 @@ export interface PipelineState {
     screenshot?: string;
     ts: string;
   }>;
+  notifications: { id: string; type: 'success' | 'error' | 'info'; title: string; message: string; ts: string }[];
 }
 
 const INIT: PipelineState = {
@@ -75,6 +76,7 @@ const INIT: PipelineState = {
   totalPatches:    0,
   activeAgents:    [],
   livePreviews:    {},
+  notifications:   [],
 };
 
 interface PipelineContextType {
@@ -83,6 +85,7 @@ interface PipelineContextType {
   reset: () => void;
   fetchResults: () => Promise<void>;
   connect: (jobId: string) => void;
+  dismissNotification: (id: string) => void;
 }
 
 const PipelineContext = createContext<PipelineContextType | undefined>(undefined);
@@ -99,7 +102,7 @@ export function PipelineProvider({ children }: { children: React.ReactNode }) {
     setState(INIT);
   }, []);
 
-  const connect = useCallback((jobId: string) => {
+  const connect = useCallback(async (jobId: string) => {
     if (connectedJobId.current === jobId) return;
     
     // Close existing connection if any
@@ -114,6 +117,23 @@ export function PipelineProvider({ children }: { children: React.ReactNode }) {
       status: s.status === 'ready' ? 'running' : s.status 
     }));
 
+    // Step 1: Recover history if needed
+    try {
+      const history = await getJobEvents(jobId);
+      if (history.length > 0) {
+        setState(prev => {
+          let next: PipelineState = { ...prev, jobId, sessionId: jobId };
+          for (const ev of history) {
+            next = applyEvent(next, ev as unknown as StreamEvent);
+          }
+          return next;
+        });
+      }
+    } catch (e) {
+      console.warn("Failed to recover history", e);
+    }
+
+    // Step 2: Stream remaining
     const { close } = streamEvaluate(
       jobId,
       (ev) => {
@@ -136,6 +156,31 @@ export function PipelineProvider({ children }: { children: React.ReactNode }) {
     );
 
     closeRef.current = close;
+  }, []);
+
+  // Auto-recovery
+  useEffect(() => {
+    async function check() {
+      try {
+        const { job_id } = await getActiveRun();
+        if (job_id) {
+          console.log("Found active run:", job_id);
+          connect(job_id);
+        }
+      } catch (e) {
+        console.error("Active run check failed", e);
+      }
+    }
+    if (!state.jobId) {
+      check();
+    }
+  }, [state.jobId, connect]);
+
+  const dismissNotification = useCallback((id: string) => {
+    setState(s => ({
+      ...s,
+      notifications: s.notifications.filter(n => n.id !== id)
+    }));
   }, []);
 
   const upload = useCallback(async (files: File[]) => {
@@ -169,7 +214,7 @@ export function PipelineProvider({ children }: { children: React.ReactNode }) {
   }, [state.jobId]);
 
   return (
-    <PipelineContext.Provider value={{ state, upload, reset, fetchResults, connect }}>
+    <PipelineContext.Provider value={{ state, upload, reset, fetchResults, connect, dismissNotification }}>
       {children}
     </PipelineContext.Provider>
   );
@@ -308,6 +353,18 @@ function applyEvent(prev: PipelineState, ev: StreamEvent): PipelineState {
       next.reportUrl = ev.report_url ?? '';
       next.downloadUrl = ev.download_url ?? '';
       next.steps = prev.steps.map(s => ({ ...s, status: 'done' as const }));
+      
+      // Add notification
+      next.notifications = [
+        ...prev.notifications,
+        {
+          id: `done_${Date.now()}`,
+          type: 'success',
+          title: 'Evaluation Complete',
+          message: `Found ${ev.issues_found ?? 0} issues across ${ev.file_count ?? 0} files.`,
+          ts: ev.ts
+        }
+      ];
       break;
 
     case 'progress':
@@ -350,6 +407,17 @@ function applyEvent(prev: PipelineState, ev: StreamEvent): PipelineState {
     case 'error':
       next.status = 'failed';
       next.error = ev.message ?? 'Unknown error';
+      // Add notification
+      next.notifications = [
+        ...prev.notifications,
+        {
+          id: `err_${Date.now()}`,
+          type: 'error',
+          title: 'Evaluation Failed',
+          message: ev.message ?? 'An unexpected error occurred.',
+          ts: ev.ts
+        }
+      ];
       break;
   }
 

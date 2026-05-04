@@ -109,7 +109,8 @@ def persona_node(state: dict) -> dict:
     url    = state.get("url", "unknown_url")
     memory_context = agent_memory.format_memory_for_prompt(url, persona.persona_id)
 
-    runner = PersonaRunner(persona, state, memory_context=memory_context)
+    pool = state.get("persona_pool")
+    runner = PersonaRunner(persona, state, memory_context=memory_context, pool=pool)
     result = runner.run()
 
     # ── Memory Recording (P7) ───────────────────────────────────────────
@@ -141,10 +142,11 @@ def persona_node(state: dict) -> dict:
 
 class PersonaRunner:
 
-    def __init__(self, persona: PersonaProfile, state: dict, memory_context: str = ""):
+    def __init__(self, persona: PersonaProfile, state: dict, memory_context: str = "", pool=None):
         self.persona  = persona
         self.state    = state
         self.memory_context = memory_context
+        self.pool = pool
         self.steps:   list[ActionStep]  = []
         self.issues:  list[IssueReport] = []
         self._ui_map: Optional[dict]    = None
@@ -474,17 +476,29 @@ class PersonaRunner:
         label:  str,
         expect_array: bool = False,
     ) -> Optional[dict | list]:
-        raw, error = groq_chat_completion(
-            api_key     = settings.persona_api_key,
-            model       = settings.persona_llm_model,
-            messages    = [
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
-            temperature = settings.persona_temperature,
-            max_tokens  = getattr(settings, "persona_max_tokens", settings.llm_max_output_tokens),
-            task        = f"persona.{label}.{self.persona.persona_id}",
-        )
+        if self.pool:
+            raw, error = self.pool.chat_completion_sync(
+                model       = settings.persona_llm_model,
+                messages    = [
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": user},
+                ],
+                temperature = settings.persona_temperature,
+                max_tokens  = getattr(settings, "persona_max_tokens", settings.llm_max_output_tokens),
+                task        = f"persona.{label}.{self.persona.persona_id}",
+            )
+        else:
+            raw, error = groq_chat_completion(
+                api_key     = settings.persona_api_key,
+                model       = settings.persona_llm_model,
+                messages    = [
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": user},
+                ],
+                temperature = settings.persona_temperature,
+                max_tokens  = getattr(settings, "persona_max_tokens", settings.llm_max_output_tokens),
+                task        = f"persona.{label}.{self.persona.persona_id}",
+            )
 
         if error:
             logger.warning(f"persona.llm.{label}.error",
