@@ -84,7 +84,7 @@ class Settings(BaseSettings):
         )
     )
     persona_max_tokens: int = Field(
-        512, ge=64, le=2048,
+        512, ge=64, le=8192,
         description=(
             "Max output tokens per persona decide/act step. "
             "Keep small — each step produces a single short JSON action. "
@@ -92,11 +92,11 @@ class Settings(BaseSettings):
         )
     )
     recommender_max_tokens: int = Field(
-        1024, ge=256, le=4096,
+        1024, ge=256,
         description="Max output tokens for recommender patch proposals."
     )
     resolver_max_tokens: int = Field(
-        1024, ge=256, le=4096,
+        1024, ge=256,
         description="Max output tokens for conflict resolver / mediator responses."
     )
     verifier_max_tokens: int = Field(
@@ -118,27 +118,28 @@ class Settings(BaseSettings):
         description="Base delay (seconds) between retries. Exponential backoff applied."
     )
 
-    # ── Parallel rate-limit control (semaphore + shared backoff) ─────────────
+    # ── Parallel rate-limit control (semaphore + per-thread retry) ───────────
     llm_max_concurrent_calls: int = Field(
         5, ge=1, le=30,
         description=(
             "Max simultaneous in-flight LLM calls per API key. "
-            "Groq free tier: 30 RPM. At ~10s avg latency, 5 concurrent = 0.5 req/s. "
-            "Lower to 3 if you still hit 429s."
+            "Set based on your provider's rate limits. "
+            "For Groq free tier (30 RPM), 5 concurrent is a safe default."
         )
     )
     llm_tpm_limit: int = Field(
-        30000, ge=0,
+        0, ge=0,
         description=(
             "Tokens-per-minute limit for the sliding-window TPM tracker. "
-            "Groq free tier: 6000-30000 TPM depending on model. Set 0 to disable."
+            "Set 0 to disable (recommended for most providers). "
+            "Enable only if your provider enforces strict TPM limits."
         )
     )
     llm_inter_request_delay_seconds: float = Field(
         0.0, ge=0.0,
         description=(
             "Optional fixed delay after acquiring the semaphore slot. "
-            "Use when TPM (not RPM) is the bottleneck. 0.0 = semaphore only."
+            "Adds breathing room between requests. 0.0 = no extra delay."
         )
     )
 

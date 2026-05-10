@@ -5,6 +5,7 @@ import { SectionLabel, StatusDot } from '@/components/ui';
 import { CheckCircle2, Circle, PlayCircle, AlertTriangle } from 'lucide-react';
 import clsx from 'clsx';
 import type { PipelineStep } from '@/types';
+import { useAnimatedNumber } from '@/hooks/useAnimatedNumber';
 
 interface PipelineRailProps {
   steps: PipelineStep[];
@@ -15,6 +16,41 @@ interface PipelineRailProps {
   model: string;
   totalIssues: number;
   totalPatches: number;
+}
+
+function CounterCard({
+  label,
+  value,
+  colorClass,
+}: {
+  label: string;
+  value: number;
+  colorClass: string;
+}) {
+  const animated = useAnimatedNumber(value, 500);
+  const prevRef = React.useRef(value);
+  const [flash, setFlash] = React.useState(false);
+
+  React.useEffect(() => {
+    if (value !== prevRef.current) {
+      setFlash(true);
+      const t = setTimeout(() => setFlash(false), 400);
+      prevRef.current = value;
+      return () => clearTimeout(t);
+    }
+  }, [value]);
+
+  return (
+    <div
+      className={clsx(
+        'bg-nexus-surface border p-2 text-center transition-colors duration-300',
+        flash ? 'border-white/30 shadow-[0_0_12px_rgba(255,255,255,0.08)]' : 'border-nexus-outline-variant'
+      )}
+    >
+      <div className="text-[9px] font-bold uppercase text-nexus-outline mb-0.5">{label}</div>
+      <div className={clsx('text-lg font-syne font-bold tabular-nums', colorClass)}>{animated}</div>
+    </div>
+  );
 }
 
 export default function PipelineRail({
@@ -88,14 +124,8 @@ export default function PipelineRail({
         </div>
 
         <div className="grid grid-cols-2 gap-2">
-          <div className="bg-nexus-surface border border-nexus-outline-variant p-2 text-center">
-            <div className="text-[9px] font-bold uppercase text-nexus-outline mb-0.5">Issues</div>
-            <div className="text-lg font-syne font-bold text-nexus-error">{totalIssues}</div>
-          </div>
-          <div className="bg-nexus-surface border border-nexus-outline-variant p-2 text-center">
-            <div className="text-[9px] font-bold uppercase text-nexus-outline mb-0.5">Patches</div>
-            <div className="text-lg font-syne font-bold text-nexus-secondary">{totalPatches}</div>
-          </div>
+          <CounterCard label="Issues" value={totalIssues} colorClass="text-nexus-error" />
+          <CounterCard label="Patches" value={totalPatches} colorClass="text-nexus-secondary" />
         </div>
 
         <div className="flex items-center gap-2">

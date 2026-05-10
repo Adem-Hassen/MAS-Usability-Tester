@@ -6,7 +6,7 @@ venv/
 __pycache__/
 *.py[cod]
 *$py.class
-
+opencode.json
 backend/sessions
 frontend/node_modules/
 frontend/.next

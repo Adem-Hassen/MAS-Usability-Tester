@@ -24,6 +24,44 @@ logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Thread-local Playwright cache — avoids N sync_playwright().start() calls
+# when running many personas via a bounded thread pool.
+# One Playwright instance per worker thread; contexts are still isolated.
+# ---------------------------------------------------------------------------
+
+class _ThreadLocalPlaywright:
+    """
+    UXAgent-inspired optimisation: sync_playwright().start() is expensive.
+    With a bounded thread pool (e.g. 8 workers) this caches one Playwright
+    driver per thread, so 100 personas only spawn 8 drivers instead of 100.
+    """
+    _local = threading.local()
+    _lock = threading.Lock()
+
+    @classmethod
+    def get(cls) -> Playwright:
+        if not hasattr(cls._local, "pw") or cls._local.pw is None:
+            with cls._lock:
+                # Double-check inside lock
+                if not hasattr(cls._local, "pw") or cls._local.pw is None:
+                    cls._local.pw = sync_playwright().start()
+                    logger.debug("thread_local_playwright.started",
+                                 thread_id=threading.get_ident())
+        return cls._local.pw
+
+    @classmethod
+    def clear(cls):
+        """Call when a worker thread is being torn down (optional)."""
+        pw = getattr(cls._local, "pw", None)
+        if pw:
+            try:
+                pw.stop()
+            except Exception:
+                pass
+            cls._local.pw = None
+
+
+# ---------------------------------------------------------------------------
 # Shared browser singleton — avoids N browser process spawns on Windows
 # Each persona gets its own BrowserContext (isolated cookies, storage,
 # viewport) but they all share one Chromium process.
@@ -194,9 +232,12 @@ class DOMState:
                 text += " ... [truncated]"
             lines.append(f"\nVISIBLE TEXT:\n{text}")
 
+        MAX_ELEMENTS_IN_PROMPT = 20
         if self.interactive_elements:
-            lines.append(f"\nINTERACTIVE ELEMENTS ({len(self.interactive_elements)}):")
-            for el in self.interactive_elements:
+            total = len(self.interactive_elements)
+            shown = min(total, MAX_ELEMENTS_IN_PROMPT)
+            lines.append(f"\nINTERACTIVE ELEMENTS ({total} total, showing first {shown}):")
+            for el in self.interactive_elements[:MAX_ELEMENTS_IN_PROMPT]:
                 label     = (el.aria_label or el.text or "")[:60].strip()
                 type_hint = f" [{el.input_type}]" if el.input_type else ""
                 role_hint = f" role={el.aria_role}" if el.aria_role else ""
@@ -207,6 +248,8 @@ class DOMState:
                     f"    selector: {el.selector}\n"
                     f"    label:    {label or '(none)'}"
                 )
+            if total > MAX_ELEMENTS_IN_PROMPT:
+                lines.append(f"  ... and {total - MAX_ELEMENTS_IN_PROMPT} more elements")
         else:
             lines.append("\nNo interactive elements visible.")
 
@@ -238,6 +281,7 @@ class ActionResult:
     screenshot_b64: Optional[str] = None
     new_url: Optional[str] = None
     elapsed_ms: int = 0
+    bounding_box: Optional[dict] = None  # {x, y, width, height} in viewport pixels
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +333,7 @@ class PlaywrightEngine:
 
         # Thread-local Playwright instance connects to the shared Chromium process
         cdp_url = _shared_browser.get_cdp_url()
-        self._playwright = sync_playwright().start()
+        self._playwright = _ThreadLocalPlaywright.get()
         self._browser = self._playwright.chromium.connect_over_cdp(cdp_url)
 
         self._context = self._browser.new_context(
@@ -365,22 +409,23 @@ class PlaywrightEngine:
                     title=page_title, url=final_url, interactive_elements=elem_count)
 
     def close(self) -> None:
-        """Close this persona's isolated context and thread-local Playwright."""
+        """Close this persona's isolated context and disconnect from CDP.
+
+        The underlying Playwright driver is cached per-thread via
+        _ThreadLocalPlaywright and is NOT stopped here — it is reused
+        by the next persona that runs on this worker thread.
+        """
         try:
             if self._context:
                 self._context.close()
             if self._browser:
-                self._browser.close() # Safely disconnects from CDP
+                self._browser.close()  # Safely disconnects from CDP
         except Exception as e:
             logger.warning("browser.close_error", persona_id=self.persona_id, error=str(e))
         finally:
             self._page = self._context = self._browser = None
-            if self._playwright:
-                try:
-                    self._playwright.stop()
-                except Exception:
-                    pass
-                self._playwright = None
+            # Do NOT stop self._playwright — it is thread-local cached
+            self._playwright = None
             _shared_browser.release()
         logger.debug("browser.closed", persona_id=self.persona_id)
 
@@ -539,7 +584,7 @@ class PlaywrightEngine:
     def _extract_interactive_elements(self) -> list:
         raw = self._page.evaluate("""() => {
             const SELECTORS = [
-                'a[href]','button:not([disabled])','input','select','textarea',
+                'a[href]','button','input','select','textarea',
                 '[role="button"]','[role="link"]','[role="checkbox"]',
                 '[role="radio"]','[role="menuitem"]',
                 '[tabindex]:not([tabindex="-1"])'
@@ -571,10 +616,16 @@ class PlaywrightEngine:
                         visibility: computed.visibility,
                         opacity: computed.opacity,
                     };
+                    // Try to find an associated label for richer context
+                    let labelText = (el.innerText||el.value||el.placeholder||'').trim().slice(0,80);
+                    if (!labelText && el.id) {
+                        const label = document.querySelector('label[for="'+el.id+'"]');
+                        if (label) labelText = label.innerText.trim().slice(0,80);
+                    }
                     out.push({
                         tag:       el.tagName.toLowerCase(),
                         selector:  selector,
-                        text:      (el.innerText||el.value||el.placeholder||'').trim().slice(0,80),
+                        text:      labelText,
                         inputType: el.type||null,
                         disabled:  el.disabled||el.getAttribute('aria-disabled')==='true',
                         focused:   el===document.activeElement,
@@ -603,6 +654,26 @@ class PlaywrightEngine:
     # Act
     # ------------------------------------------------------------------
 
+    def _get_bounding_box(self, selector: Optional[str]) -> Optional[dict]:
+        """Return element bounding box {x, y, width, height} or None."""
+        if not selector or not self._page:
+            return None
+        try:
+            elem = self._page.query_selector(selector)
+            if not elem:
+                return None
+            box = elem.bounding_box()
+            if not box:
+                return None
+            return {
+                "x": round(box["x"], 1),
+                "y": round(box["y"], 1),
+                "width": round(box["width"], 1),
+                "height": round(box["height"], 1),
+            }
+        except Exception:
+            return None
+
     def execute_action(
         self,
         action_type: str,
@@ -628,6 +699,7 @@ class PlaywrightEngine:
             r.new_url        = self._page.url
             r.elapsed_ms     = int((time.time() - start) * 1000)
             r.screenshot_b64 = self._take_screenshot()
+            r.bounding_box   = self._get_bounding_box(target_selector)
 
             log = logger.info if r.success else logger.warning
             log("action.executed", persona_id=self.persona_id,
@@ -713,6 +785,23 @@ class PlaywrightEngine:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def selector_exists(self, selector: str, timeout_ms: int = 500) -> bool:
+        """
+        Fast-fail DOM check used by ActionValidator.
+        Returns True if at least one element matching *selector* is present.
+        Uses a short timeout so hallucinated selectors fail quickly.
+        """
+        if not self._page or self._page.is_closed():
+            return False
+        try:
+            # Playwright's count() is synchronous and fast; we add a minimal
+            # timeout via locator to be safe on dynamic pages.
+            locator = self._page.locator(selector)
+            count = locator.count()
+            return count > 0
+        except Exception:
+            return False
 
     def _get_element_html(self, selector: str) -> Optional[str]:
         try:

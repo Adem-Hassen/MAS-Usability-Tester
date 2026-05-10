@@ -166,6 +166,9 @@ def _run_pipeline_sync(session: Session, store: SessionStore) -> None:
     session.finished_at = datetime.utcnow()
     session.progress    = 100
 
+    # Persist results to DB so API endpoints can retrieve them
+    store.save_results(session.session_id, session.results)
+
     # ── V1 structured event: pipeline_complete ─────────────────────────
     has_pdf = (session.output_dir / "report.pdf").exists()
     emit(EventKind.PIPELINE_COMPLETE,
@@ -282,7 +285,8 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
                  action_type=payload.get("action_type"), 
                  selector=payload.get("selector"), 
                  result=payload.get("result"),
-                 screenshot=scr_url)
+                 screenshot=scr_url,
+                 bounding_box=payload.get("bounding_box"))
         elif event_key in ("clustering_node", "cluster_engine"):
             if "clustering_node" == event_key:
                 emit(EventKind.CLUSTERING_START, raw_issue_count=0)
@@ -297,7 +301,10 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
         elif event_key == "conflict_resolver":
             emit(EventKind.CONFLICT_RESOLVED, resolution_strategy="llm")
         elif event_key == "patch_applicator":
-            emit(EventKind.PATCH_APPLIED, file_name="", patch_count=0)
+            # PATCH_APPLIED is now emitted from _extract_results with the real count.
+            # We only emit a progress step here so the UI shows "Applying patches…".
+            emit(EventKind.STEP, step="applicator", status="running",
+                 label="Applying patches…")
 
     def _bus_handler(event_type: str, payload: dict):
         if event_type == "log_event":
@@ -440,6 +447,14 @@ def _run_real_pipeline(session, store, emit, total_pages, all_results):
             out_file = session.output_dir / f"{stem}_fixed.html"
             if patched:
                 out_file.write_text(patched, encoding="utf-8")
+
+            # Emit real patch-applied count (replaces the hardcoded 0 from _emit_v1_event)
+            applied_count = getattr(ctx, 'total_patches_applied', 0) or 0
+            emit(EventKind.PATCH_APPLIED,
+                 file_name=f"{stem}.html",
+                 patch_count=applied_count)
+            emit(EventKind.STEP, step="applicator", status="done",
+                 page=stem, label=f"Applied {applied_count} patches")
 
         # Save report JSON
         if report:

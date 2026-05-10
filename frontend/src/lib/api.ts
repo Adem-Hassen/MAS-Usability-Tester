@@ -213,9 +213,13 @@ export function streamSession(sessionId: string): EventSource {
 }
 
 export async function getResults(sessionId: string) {
-  const res = await fetch(`${BASE}/sessions/${sessionId}/results`);
-  if (!res.ok) throw new Error(`Results not ready (${res.status})`);
-  return res.json();
+    // Try v1 endpoint first, fall back to legacy
+    let res = await fetch(`${BASE}/v1/evaluate/${sessionId}/results`);
+    if (res.status === 404) {
+        res = await fetch(`${BASE}/sessions/${sessionId}/results`);
+    }
+    if (!res.ok) throw new Error(`Results not ready (${res.status})`);
+    return res.json();
 }
 
 export async function getStatus(sessionId: string) {

@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Optional
 
 from config.settings import settings
-from tools.rate_limiter import groq_chat_completion
+from tools.rate_limiter import chat_completion
+from tools.llm_router import get_supervisor_router
 from schemas.issue_schema import IssueCluster, IssueReport, PersonaSimulationResult, IssueSeverity
 from schemas.patch_schema import UnifiedPatchSet
 from schemas.report_schema import DiagnosticReport, SeverityBreakdown, VerificationResult
@@ -313,12 +314,9 @@ def _call_supervisor_llm(
     user:   str,
     task:   str,
 ) -> tuple[str, Optional[str]]:
-    return groq_chat_completion(
-        api_key     = settings.supervisor_api_key,
-        model       = settings.supervisor_llm_model,
-        messages    = [{"role": "system", "content": system},
-                       {"role": "user",   "content": user}],
-        temperature = settings.supervisor_temperature,
-        max_tokens  = getattr(settings, "supervisor_max_tokens", settings.llm_max_output_tokens),
-        task        = task,
+    router = get_supervisor_router()
+    return router.chat_completion(
+        messages=[{"role": "system", "content": system},
+                  {"role": "user",   "content": user}],
+        task=task,
     )

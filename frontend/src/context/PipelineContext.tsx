@@ -48,6 +48,7 @@ export interface PipelineState {
     selector?: string;
     screenshot?: string;
     ts: string;
+    boundingBox?: { x: number; y: number; width: number; height: number };
   }>;
   notifications: { id: string; type: 'success' | 'error' | 'info'; title: string; message: string; ts: string }[];
 }
@@ -205,11 +206,31 @@ export function PipelineProvider({ children }: { children: React.ReactNode }) {
 
   const fetchResults = useCallback(async () => {
     if (!state.jobId) return;
+    console.log(`[PipelineContext] Fetching results for ${state.jobId}...`);
     try {
       const results = await getResults(state.jobId);
-      setState(s => ({ ...s, results }));
-    } catch (err) {
-      console.warn("Results not ready", err);
+      const issuesTotal = results?.issues_total ?? 0;
+      const patchesTotal = results?.patches_total ?? 0;
+      console.log(`[PipelineContext] Results loaded:`, {
+        pages: results?.pages?.length || 0,
+        issues: issuesTotal,
+        patches: patchesTotal,
+      });
+      // Also update counters from the fetched results (useful when the page
+      // is refreshed after pipeline completion and SSE history is empty).
+      setState(s => ({
+        ...s,
+        results,
+        totalIssues: Math.max(s.totalIssues, issuesTotal),
+        totalPatches: Math.max(s.totalPatches, patchesTotal),
+      }));
+    } catch (err: any) {
+      console.error("[PipelineContext] fetchResults failed:", err);
+      setState(s => ({
+        ...s,
+        error: err.message || "Failed to load results",
+        errorStage: "results_fetch",
+      }));
     }
   }, [state.jobId]);
 
@@ -283,7 +304,8 @@ function applyEvent(prev: PipelineState, ev: StreamEvent): PipelineState {
             action: ev.action_type,
             selector: ev.selector,
             screenshot: ev.screenshot,
-            ts: ev.ts
+            ts: ev.ts,
+            boundingBox: ev.bounding_box,
           }
         };
       }
@@ -321,6 +343,7 @@ function applyEvent(prev: PipelineState, ev: StreamEvent): PipelineState {
       next.progressLabel = patchMsg;
       if (ev.status === 'done') {
         next.totalPatches = prev.totalPatches + 1;
+        console.log(`[PipelineContext] recommender_patch: totalPatches=${next.totalPatches}`);
       }
       break;
 
@@ -342,17 +365,28 @@ function applyEvent(prev: PipelineState, ev: StreamEvent): PipelineState {
       next.steps = prev.steps.map(s =>
         s.id === 'applicator' ? { ...s, status: 'done' } : s
       );
-      next.progressLabel = `Applied ${ev.patch_count ?? 0} patches to ${ev.file_name ?? ''}`;
+      const appliedCount = ev.patch_count ?? 0;
+      next.progressLabel = `Applied ${appliedCount} patches to ${ev.file_name ?? ''}`;
+      // patch_applied carries the backend's authoritative applied count.
+      next.totalPatches = Math.max(prev.totalPatches, appliedCount);
+      console.log(`[PipelineContext] patch_applied: patch_count=${appliedCount}, totalPatches=${next.totalPatches}`);
       break;
 
     case 'pipeline_complete':
       next.status = 'done';
       next.progress = 100;
-      next.totalIssues = ev.issues_found ?? 0;
-      next.totalPatches = ev.patches_applied ?? 0;
+      // Use Math.max so the backend's aggregated totals don't overwrite
+      // higher event-based counts that arrived earlier (e.g. from correction
+      // loops or real-time recommender_patch increments).
+      const finalIssues = Math.max(prev.totalIssues, ev.issues_found ?? 0);
+      const finalPatches = Math.max(prev.totalPatches, ev.patches_applied ?? 0);
+      next.totalIssues = finalIssues;
+      next.totalPatches = finalPatches;
       next.reportUrl = ev.report_url ?? '';
       next.downloadUrl = ev.download_url ?? '';
       next.steps = prev.steps.map(s => ({ ...s, status: 'done' as const }));
+      
+      console.log(`[PipelineContext] pipeline_complete: issues_found=${ev.issues_found}, patches_applied=${ev.patches_applied}, finalIssues=${finalIssues}, finalPatches=${finalPatches}`);
       
       // Add notification
       next.notifications = [
@@ -361,7 +395,7 @@ function applyEvent(prev: PipelineState, ev: StreamEvent): PipelineState {
           id: `done_${Date.now()}`,
           type: 'success',
           title: 'Evaluation Complete',
-          message: `Found ${ev.issues_found ?? 0} issues across ${ev.file_count ?? 0} files.`,
+          message: `Found ${finalIssues} issues across ${ev.file_count ?? 0} files.`,
           ts: ev.ts
         }
       ];
@@ -382,8 +416,15 @@ function applyEvent(prev: PipelineState, ev: StreamEvent): PipelineState {
       break;
 
     case 'issue':
+      const issueId = ev.issue_id ?? `i_${Date.now()}`;
+      // Deduplicate: skip if this issue_id was already recorded (e.g. from
+      // a previous correction loop).
+      if (prev.issues.some(i => i.issue_id === issueId)) {
+        console.log(`[PipelineContext] issue dedup skipped: ${issueId}`);
+        break;
+      }
       next.issues = [...prev.issues, {
-        issue_id: ev.issue_id ?? `i_${Date.now()}`,
+        issue_id: issueId,
         title: ev.title ?? '(untitled)',
         severity: ev.severity ?? 'medium',
         category: ev.category ?? 'usability',
@@ -391,17 +432,27 @@ function applyEvent(prev: PipelineState, ev: StreamEvent): PipelineState {
         page: ev.page ?? '',
       }];
       next.totalIssues = next.issues.length;
+      console.log(`[PipelineContext] issue added: ${issueId}, totalIssues=${next.totalIssues}`);
       break;
 
     case 'patch':
+      const patchId = ev.patch_id ?? `p_${Date.now()}`;
+      // Deduplicate: skip if this patch_id was already recorded.
+      if (prev.patches.some(p => p.patch_id === patchId)) {
+        console.log(`[PipelineContext] patch dedup skipped: ${patchId}`);
+        break;
+      }
       next.patches = [...prev.patches, {
-        patch_id: ev.patch_id ?? `p_${Date.now()}`,
+        patch_id: patchId,
         target: ev.target ?? '',
         description: ev.description ?? '',
         patch_type: ev.patch_type ?? '',
         page: ev.page ?? '',
       }];
-      next.totalPatches = next.patches.length;
+      // Use max() so that real-time recommender_patch increments aren't
+      // overwritten when batch patch events arrive at the end of the pipeline.
+      next.totalPatches = Math.max(prev.totalPatches, next.patches.length);
+      console.log(`[PipelineContext] patch added: ${patchId}, totalPatches=${next.totalPatches}`);
       break;
 
     case 'error':

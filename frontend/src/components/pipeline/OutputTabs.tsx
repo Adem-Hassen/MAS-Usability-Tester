@@ -18,6 +18,7 @@ interface OutputTabsProps {
   reportUrl?: string;
   downloadUrl?: string;
   pageFilter: string | null;
+  onFetchResults?: () => void;
 }
 
 function PreviewPanel({ results, sessionId, pageFilter }: { results: any, sessionId: string, pageFilter: string | null }) {
@@ -25,33 +26,54 @@ function PreviewPanel({ results, sessionId, pageFilter }: { results: any, sessio
   const [fixedHtml, setFixedHtml] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   // Use the first page if no filter is active
   const activePage = pageFilter || (results?.pages?.[0]?.page);
 
   React.useEffect(() => {
-    if (!activePage || !sessionId || !results) return;
+    if (!activePage || !sessionId || !results) {
+      console.log('[PreviewPanel] Skipped load — missing:', { activePage, hasSessionId: !!sessionId, hasResults: !!results });
+      return;
+    }
 
     async function load() {
       setLoading(true);
       setError(null);
       try {
-        const pageData = results.pages.find((p: any) => p.page === activePage) || results.pages[0];
-        if (!pageData) throw new Error("Page results not found");
+        const pageData = results.pages?.find((p: any) => p.page === activePage) || results.pages?.[0];
+        if (!pageData) {
+          throw new Error(`No page data found. Results has ${results.pages?.length || 0} pages.`);
+        }
 
-        const originalUrl = originalFileUrl(sessionId, pageData.original_file || activePage);
-        const fixedUrl = fixedFileUrl(sessionId, pageData.fixed_file);
+        const originalFile = pageData.original_file || activePage;
+        const fixedFile = pageData.fixed_file;
 
-        console.log(`[PreviewPanel] Fetching: ${originalUrl} and ${fixedUrl}`);
+        if (!fixedFile) {
+          throw new Error(`No fixed_file for page "${activePage}". Patch may not have been generated.`);
+        }
+
+        const originalUrl = originalFileUrl(sessionId, originalFile);
+        const fixedUrl = fixedFileUrl(sessionId, fixedFile);
+
+        console.log(`[PreviewPanel] Loading: original=${originalUrl}, fixed=${fixedUrl}`);
 
         const [orig, fixed] = await Promise.all([
-          getFileContent(originalUrl),
-          getFileContent(fixedUrl)
+          getFileContent(originalUrl).catch(e => {
+            console.error('[PreviewPanel] Original fetch failed:', e);
+            throw new Error(`Original file failed: ${e.message}`);
+          }),
+          getFileContent(fixedUrl).catch(e => {
+            console.error('[PreviewPanel] Fixed fetch failed:', e);
+            throw new Error(`Fixed file failed: ${e.message}`);
+          })
         ]);
 
+        console.log(`[PreviewPanel] Loaded: original=${orig.length} chars, fixed=${fixed.length} chars`);
         setOriginalHtml(orig);
         setFixedHtml(fixed);
       } catch (err: any) {
+        console.error('[PreviewPanel] Load error:', err);
         setError(err.message || "Failed to load comparison data");
       } finally {
         setLoading(false);
@@ -59,7 +81,11 @@ function PreviewPanel({ results, sessionId, pageFilter }: { results: any, sessio
     }
 
     load();
-  }, [activePage, sessionId, results]);
+  }, [activePage, sessionId, results, retryCount]);
+
+  const handleRetry = () => {
+    setRetryCount(c => c + 1);
+  };
 
   if (!results) {
     return (
@@ -67,7 +93,25 @@ function PreviewPanel({ results, sessionId, pageFilter }: { results: any, sessio
         <Layout size={48} strokeWidth={1} />
         <div>
           <div className="text-sm font-bold uppercase tracking-widest text-white mb-2">Visual Regression</div>
-          <p className="text-xs max-w-[240px]">Live comparison preview will be available after the verification stage.</p>
+          <p className="text-xs max-w-[240px]">Results not yet loaded. Wait for pipeline completion or click Refresh.</p>
+          <button
+            onClick={handleRetry}
+            className="mt-3 text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 bg-nexus-primary/20 border border-nexus-primary/30 text-nexus-primary hover:bg-nexus-primary/30 transition-colors"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!results.pages || results.pages.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center gap-4 text-nexus-outline">
+        <Layout size={48} strokeWidth={1} />
+        <div>
+          <div className="text-sm font-bold uppercase tracking-widest text-white mb-2">No Page Data</div>
+          <p className="text-xs max-w-[240px]">Results loaded but contain no page entries.</p>
         </div>
       </div>
     );
@@ -75,27 +119,58 @@ function PreviewPanel({ results, sessionId, pageFilter }: { results: any, sessio
 
   if (loading) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-nexus-outline animate-pulse text-xs font-bold uppercase tracking-widest">Loading comparison...</div>
+      <div className="h-full flex flex-col items-center justify-center gap-3">
+        <div className="w-6 h-6 border-2 border-nexus-outline border-t-nexus-primary rounded-full animate-spin" />
+        <div className="text-nexus-outline text-xs font-bold uppercase tracking-widest">Loading comparison...</div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-nexus-error text-center p-4">
-        <AlertCircle size={32} className="mb-2" />
-        <div className="text-sm font-bold uppercase mb-1">Error Loading Preview</div>
-        <p className="text-xs opacity-70">{error}</p>
+      <div className="h-full flex flex-col items-center justify-center text-nexus-error text-center p-4 gap-3">
+        <AlertCircle size={32} />
+        <div className="text-sm font-bold uppercase">Error Loading Preview</div>
+        <p className="text-xs opacity-70 max-w-[280px]">{error}</p>
+        <button
+          onClick={handleRetry}
+          className="mt-2 text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 bg-nexus-error/20 border border-nexus-error/30 text-nexus-error hover:bg-nexus-error/30 transition-colors"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
-  if (!originalHtml || !fixedHtml) return null;
+  if (!originalHtml || !fixedHtml) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center gap-4 text-nexus-outline">
+        <Layout size={48} strokeWidth={1} />
+        <div>
+          <div className="text-sm font-bold uppercase tracking-widest text-white mb-2">Preview Unavailable</div>
+          <p className="text-xs max-w-[240px]">HTML content could not be loaded.</p>
+          <button
+            onClick={handleRetry}
+            className="mt-3 text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 bg-nexus-primary/20 border border-nexus-primary/30 text-nexus-primary hover:bg-nexus-primary/30 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 h-full flex flex-col">
-      <SectionLabel>Live Comparison — {activePage}</SectionLabel>
+      <div className="flex items-center justify-between">
+        <SectionLabel>Live Comparison — {activePage}</SectionLabel>
+        <button
+          onClick={handleRetry}
+          className="text-[9px] font-bold uppercase tracking-widest px-2 py-1 bg-white/5 border border-white/10 text-nexus-outline hover:text-white hover:border-white/20 transition-colors"
+        >
+          Refresh
+        </button>
+      </div>
       <div className="flex-1 min-h-0">
         <DiffViewer original={originalHtml} fixed={fixedHtml} filename={activePage} />
       </div>
@@ -112,8 +187,17 @@ export default function OutputTabs({
   reportUrl,
   downloadUrl,
   pageFilter,
+  onFetchResults,
 }: OutputTabsProps) {
   const [activeTab, setActiveTab] = useState('issues');
+
+  const handleTabClick = (tabId: string) => {
+    setActiveTab(tabId);
+    if (tabId === 'preview' && onFetchResults) {
+      console.log('[OutputTabs] Verify tab clicked — fetching results...');
+      onFetchResults();
+    }
+  };
 
   const filteredIssues = pageFilter ? issues.filter(i => i.page === pageFilter) : issues;
   const filteredPatches = pageFilter ? patches.filter(p => p.page === pageFilter) : patches;
@@ -132,9 +216,9 @@ export default function OutputTabs({
         {tabs.map((tab) => {
           const isActive = activeTab === tab.id;
           return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              <button
+                key={tab.id}
+                onClick={() => handleTabClick(tab.id)}
               className={clsx(
                 "flex-1 flex flex-col items-center justify-center py-3 px-2 gap-1.5 transition-all relative group",
                 isActive ? "text-white" : "text-nexus-outline hover:text-white/80"

@@ -24,11 +24,23 @@ export default function EvaluatePage() {
     }
   }, [job_id, connect]);
 
+  // Fetch results when pipeline completes or on mount if already done
   useEffect(() => {
-    if (state.status === 'done') {
+    if (state.status === 'done' && !state.results) {
+      console.log('[EvaluatePage] Pipeline done, fetching results...');
       fetchResults();
     }
-  }, [state.status, fetchResults]);
+  }, [state.status, state.results, fetchResults]);
+
+  // Poll for results every 5s if done but results still missing (safety net)
+  useEffect(() => {
+    if (state.status !== 'done' || state.results) return;
+    const interval = setInterval(() => {
+      console.log('[EvaluatePage] Polling for results...');
+      fetchResults();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [state.status, state.results, fetchResults]);
 
   return (
     <div className="flex h-screen bg-nexus-bg font-sans text-white overflow-hidden">
@@ -85,7 +97,7 @@ export default function EvaluatePage() {
           {/* Panel 1: Pipeline Rail */}
           <PipelineRail 
             steps={state.steps}
-            progress={state.progress}
+            progress={state.progress} 
             progressLabel={state.progressLabel}
             isRunning={isRunning}
             connection={state.connection}
@@ -121,6 +133,7 @@ export default function EvaluatePage() {
               reportUrl={state.reportUrl}
               downloadUrl={state.downloadUrl}
               pageFilter={null}
+              onFetchResults={fetchResults}
             />
           </div>
 

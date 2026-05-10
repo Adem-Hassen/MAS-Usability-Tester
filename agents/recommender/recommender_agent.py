@@ -8,7 +8,8 @@ import uuid
 from typing import Optional
 
 from config.settings import settings
-from tools.rate_limiter import groq_chat_completion
+from tools.rate_limiter import chat_completion
+from tools.llm_router import get_recommender_router
 from schemas.persona_schema import UIAnalysis
 
 from schemas.issue_schema import IssueCluster, RecommenderProfile, IssueReport
@@ -120,20 +121,25 @@ def _find_overlapping_selectors(
 
 
 def _format_issues_detail(issues: list[IssueReport]) -> str:
+    """Format issue details, capping to avoid token explosion."""
+    MAX_ISSUES = 5          # cap number of issues shown
+    MAX_DESC_LEN = 200      # cap description length
+    MAX_HTML_LEN = 150      # cap HTML snippet length
     lines = []
-    for i, iss in enumerate(issues, 1):
+    for i, iss in enumerate(issues[:MAX_ISSUES], 1):
+        desc = (iss.description or "")[:MAX_DESC_LEN]
         lines.append(f"Issue {i} (id={iss.issue_id}, severity={iss.severity}):")
         lines.append(f"  Title: {iss.title}")
-        lines.append(f"  Description: {iss.description}")
+        lines.append(f"  Description: {desc}")
         if iss.affected_element:
-            lines.append(f"  Affected selector: {iss.affected_element}")
+            lines.append(f"  Selector: {iss.affected_element}")
         if iss.affected_element_html:
-            lines.append(f"  Element HTML: {iss.affected_element_html[:300]}")
+            lines.append(f"  HTML: {iss.affected_element_html[:MAX_HTML_LEN]}")
         if iss.wcag_criterion:
             lines.append(f"  WCAG: {iss.wcag_criterion}")
-        if iss.reproduction_steps:
-            lines.append(f"  Repro: {' -> '.join(iss.reproduction_steps)}")
         lines.append("")
+    if len(issues) > MAX_ISSUES:
+        lines.append(f"... and {len(issues) - MAX_ISSUES} more issues (truncated)")
     return "\n".join(lines)
 
 
@@ -229,6 +235,14 @@ def _propose_patch(
     html_snippet = _extract_relevant_html(html_content, profile.affected_elements)
     global_styles = _extract_global_styles(html_content)
 
+    # Cap large JSON blobs to prevent token explosion
+    ui_analysis_json = ui_analysis.model_dump_json(indent=2) if ui_analysis else "None provided"
+    design_tokens_json = json.dumps(design_tokens, indent=2)
+    if len(ui_analysis_json) > 2000:
+        ui_analysis_json = ui_analysis_json[:2000] + "\n... [truncated]"
+    if len(design_tokens_json) > 1000:
+        design_tokens_json = design_tokens_json[:1000] + "\n... [truncated]"
+
     user = RECOMMENDER_USER.format(
         cluster_id=profile.cluster_id,
         cluster_label=profile.cluster_label,
@@ -241,9 +255,16 @@ def _propose_patch(
         html_content=html_snippet,
         global_styles=global_styles,
         ui_context=ui_context,
-        ui_analysis_json=ui_analysis.model_dump_json(indent=2) if ui_analysis else "None provided",
-        design_tokens_json=json.dumps(design_tokens, indent=2),
+        ui_analysis_json=ui_analysis_json,
+        design_tokens_json=design_tokens_json,
     ) + overlap_note
+
+    prompt_size = len(system) + len(user)
+    logger.info("recommender.prompt_size",
+                recommender_id=profile.recommender_id,
+                prompt_chars=prompt_size,
+                system_chars=len(system),
+                user_chars=len(user))
 
     raw, error = _call_recommender_llm(system, user, task="propose_patch")
     if error:
@@ -252,22 +273,26 @@ def _propose_patch(
         return None
 
     # ── R5: Multi-pass self-critique if confidence is low ────────────────
-    try:
-        data = json.loads(raw)
-        conf = data.get("confidence", 0.5)
-        if conf < 0.8:
-            logger.info("recommender.low_confidence_triggering_critique", 
-                        recommender_id=profile.recommender_id, conf=conf)
-            refined_raw = _critique_and_refine(profile, cluster, html_snippet, raw)
-            if refined_raw:
-                refined_data = json.loads(refined_raw)
-                if "refined_proposal" in refined_data:
-                    data = refined_data["refined_proposal"]
-                    raw = json.dumps(data)
-                    logger.info("recommender.critique_successful", 
-                                recommender_id=profile.recommender_id)
-    except Exception as e:
-        logger.warning("recommender.critique_failed", error=str(e))
+    # DISABLED: critique_and_refine causes a second LLM call which compounds
+    # rate limiting. With limited API quotas, we prefer one good call over
+    # two calls with the risk of both failing.
+    #
+    # try:
+    #     data = json.loads(raw)
+    #     conf = data.get("confidence", 0.5)
+    #     if conf < 0.8:
+    #         logger.info("recommender.low_confidence_triggering_critique", 
+    #                     recommender_id=profile.recommender_id, conf=conf)
+    #         refined_raw = _critique_and_refine(profile, cluster, html_snippet, raw)
+    #         if refined_raw:
+    #             refined_data = json.loads(refined_raw)
+    #             if "refined_proposal" in refined_data:
+    #                 data = refined_data["refined_proposal"]
+    #                 raw = json.dumps(data)
+    #                 logger.info("recommender.critique_successful", 
+    #                             recommender_id=profile.recommender_id)
+    # except Exception as e:
+    #     logger.warning("recommender.critique_failed", error=str(e))
 
 
     try:
@@ -326,21 +351,17 @@ def _propose_patch(
                                  recommender_id=profile.recommender_id)
                 elif _looks_like_html(after):
                     # after_snippet is HTML — LLM confused patch_type vs after_snippet
-                    # Make a second LLM call to get the actual JS
+                    # Skip second LLM call to avoid rate limit compounding;
+                    # downgrade to html_attribute so the patch is at least useful.
                     logger.warning(
                         "recommender.js_snippet_missing_html_in_after",
                         recommender_id=profile.recommender_id,
                         after_preview=after[:80],
                     )
-                    js_code = _recover_js_snippet(profile, cluster, html_snippet, ui_context, data)
-                    if js_code:
-                        data["js_snippet"] = js_code
-                    else:
-                        # Downgrade to html_attribute so the patch is at least useful
-                        data["patch_type"] = "html_attribute"
-                        data["after_snippet"] = after
-                        logger.warning("recommender.js_downgraded_to_html",
-                                       recommender_id=profile.recommender_id)
+                    data["patch_type"] = "html_attribute"
+                    data["after_snippet"] = after
+                    logger.warning("recommender.js_downgraded_to_html",
+                                   recommender_id=profile.recommender_id)
 
             # after_snippet must be null for JS patches
             if data["patch_type"] in _JS_TYPES:
@@ -443,22 +464,25 @@ def _fallback_proposal(
 
 
 def _extract_relevant_html(html_content: str, affected_elements: list[str]) -> str:
-    MAX_CHARS = 8_000
+    MAX_CHARS = 4_000
     if len(html_content) <= MAX_CHARS:
         return html_content
     if affected_elements:
         target = affected_elements[0].lstrip("#.").split("[")[0]
         idx = html_content.find(target)
         if idx != -1:
-            start = max(0, idx - 2_000)
-            end   = min(len(html_content), idx + 6_000)
+            start = max(0, idx - 1_000)
+            end   = min(len(html_content), idx + 3_000)
             return html_content[start:end]
     return html_content[:MAX_CHARS]
 
 
 def _extract_global_styles(html_content: str) -> str:
     styles = re.findall(r'<style[^>]*>(.*?)</style>', html_content, re.DOTALL | re.IGNORECASE)
-    return "\n".join(styles).strip()
+    combined = "\n".join(styles).strip()
+    if len(combined) > 2_000:
+        return combined[:2_000] + "\n/* ... truncated ... */"
+    return combined
 
 
 def _critique_and_refine(
@@ -487,12 +511,10 @@ def _call_recommender_llm(
     user:   str,
     task:   str,
 ) -> tuple[str, Optional[str]]:
-    return groq_chat_completion(
-        api_key     = settings.recommender_api_key,
-        model       = settings.recommender_llm_model,
-        messages    = [{"role": "system", "content": system},
-                       {"role": "user",   "content": user}],
-        temperature = settings.recommender_temperature,
-        max_tokens  = getattr(settings, 'recommender_max_tokens', settings.llm_max_output_tokens),
-        task        = task,
+    # UXAgent Fix 3: Unified LLM Router
+    router = get_recommender_router()
+    return router.chat_completion(
+        messages=[{"role": "system", "content": system},
+                  {"role": "user",   "content": user}],
+        task=task,
     )

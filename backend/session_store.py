@@ -258,6 +258,19 @@ class SessionStore:
     # Event streaming
     # ------------------------------------------------------------------
 
+    def save_results(self, session_id: str, results: dict) -> None:
+        """Persist results JSON to the sessions table."""
+        DB_PATH = SESSIONS_DIR / "sessions.db"
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            with conn:
+                conn.execute(
+                    "UPDATE sessions SET results = ? WHERE session_id = ?",
+                    (json.dumps(results, default=str), session_id)
+                )
+        finally:
+            conn.close()
+
     def emit(self, session_id: str, kind: str, **payload) -> None:
         """Emit an event to all subscribers and buffer it with an auto-incrementing ID."""
         DB_PATH = SESSIONS_DIR / "sessions.db"

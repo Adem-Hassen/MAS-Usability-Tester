@@ -9,7 +9,8 @@ import concurrent.futures
 from pathlib import Path
 
 from config.settings import settings
-from tools.rate_limiter import groq_chat_completion
+from tools.rate_limiter import chat_completion
+from tools.llm_router import get_supervisor_router
 from tools.html_preprocessor import preprocess_for_analysis
 from core.state import GraphState, PageContext
 from schemas.persona_schema import UIAnalysis, PersonaProfile
@@ -88,7 +89,7 @@ def supervisor_node(state: dict) -> dict:
         # 1. UI Analysis
         user_prompt = UI_ANALYSIS_USER.format(
             ui_context=ui_context,
-            html_content=preprocess_for_analysis(html_content, 10_000),
+            html_content=preprocess_for_analysis(html_content, 5_000),
         )
         raw_analysis, analysis_error = _call_supervisor_llm(
             system_prompt=UI_ANALYSIS_SYSTEM,
@@ -208,9 +209,11 @@ def analysis_node(state: dict) -> dict:
 
     for result in simulation_results:
         tv = verdict_by_persona.get(result.persona_id)
+        raw_issue_count = len(result.issues)
         if tv and tv.overall_verdict == TraceVerdict.INVALID:
             logger.info("analysis.trace_dropped",
-                        persona_id=result.persona_id, reason="verdict INVALID")
+                        persona_id=result.persona_id, reason="verdict INVALID",
+                        raw_issues=raw_issue_count)
             continue
 
         step_verdict = {
@@ -232,6 +235,12 @@ def analysis_node(state: dict) -> dict:
 
         verified_results.append(clean_result)
         verified_issues.extend(clean_issues)
+
+        logger.debug("analysis.persona_issues",
+                     persona_id=result.persona_id,
+                     raw=raw_issue_count,
+                     clean=len(clean_issues),
+                     discarded=raw_issue_count - len(clean_issues))
 
     logger.info("analysis.complete",
                 page=Path(html_path).name,
@@ -401,6 +410,9 @@ def _generate_personas(
     )
     if error:
         return None, error
+    if not raw or not raw.strip():
+        logger.error("supervisor.persona_generation_empty_response")
+        return None, "LLM returned empty response for persona generation"
 
     try:
         data = json.loads(raw)
@@ -514,7 +526,8 @@ def _verify_traces(
             if el.selector:
                 k = el.selector.strip()
                 known_selectors.add(k)
-                if getattr(el, "tag", "").lower() in ("input", "textarea", "select"):
+                tag = getattr(el, "tag", "").lower().strip("<>")
+                if tag in ("input", "textarea", "select", "contenteditable"):
                     input_selectors.add(k)
         for path in getattr(ui_analysis, "critical_paths", []):
             entry = getattr(path, "entry_selector", None)
@@ -554,19 +567,19 @@ def _verify_traces(
             if action_sig in previous_actions and atype != "observe":
                 verdict, confidence = TraceVerdict.INVALID, 0.95
                 reason = "Post-mortem Loop Detection: Exact identical action and consequence signature repeated."
-            elif atype == "navigate" and "navigate_intercepted" in err:
-                verdict, confidence = TraceVerdict.INVALID, 0.95
+            elif atype == "navigate" and ("navigate_intercepted" in err or "navigate is not allowed" in err):
+                verdict, confidence = TraceVerdict.SUSPECT, 0.95
                 reason = f"navigate to {val!r} intercepted."
-            elif atype == "navigate" and val.startswith(("/", "http")):
+            elif atype == "navigate" and val and val.startswith(("/", "http")):
                 if val not in known_hrefs and not any(val in h for h in known_hrefs):
-                    verdict, confidence = TraceVerdict.INVALID, 0.9
+                    verdict, confidence = TraceVerdict.SUSPECT, 0.6
                     reason = f"navigate target {val!r} not in known hrefs."
             elif atype in ("click", "type") and not sel:
                 verdict, confidence = TraceVerdict.INVALID, 0.95
                 reason = "click/type with no target_selector."
             elif atype == "type" and sel and sel not in input_selectors:
-                verdict, confidence = TraceVerdict.INVALID, 0.95
-                reason = f"Logical Impossibility: 'type' action attempted on non-input element {sel!r}."
+                verdict, confidence = TraceVerdict.SUSPECT, 0.95
+                reason = f"Type action on element {sel!r} which wasn't strictly identified as an input."
             elif "ERR_FILE_NOT_FOUND" in err or "net::ERR" in err:
                 verdict, confidence = TraceVerdict.INVALID, 0.9
                 reason = f"Browser network error: {err[:80]}"
@@ -599,6 +612,7 @@ def _verify_traces(
 
         if invalid_c / total > 0.40:
             overall, conf = TraceVerdict.INVALID, 0.85
+            logger.warning("supervisor.trace_dropped", persona_id=result.persona_id, invalid_ratio=f"{invalid_c}/{total}")
         elif (invalid_c + suspect_c) / total > 0.25:
             overall, conf = TraceVerdict.SUSPECT, 0.75
         else:
@@ -787,26 +801,27 @@ def _call_supervisor_llm(
     task:          str,
     force_array:   bool = False,
 ) -> tuple[str, str | None]:
-    """Uses groq_chat_completion with Groq-aware rate limiting."""
+    """Uses chat_completion with provider-agnostic rate limiting."""
     if force_array:
         system_prompt = (
             system_prompt
             + '\n\nIMPORTANT: Wrap your JSON array in an object: {"items": [...]}'
         )
 
-    raw, error = groq_chat_completion(
-        api_key     = settings.supervisor_api_key,
-        model       = settings.supervisor_llm_model,
-        messages    = [
+    router = get_supervisor_router()
+    raw, error = router.chat_completion(
+        messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_prompt},
         ],
-        temperature = settings.supervisor_temperature,
-        max_tokens  = getattr(settings, 'supervisor_max_tokens', settings.llm_max_output_tokens),
-        task        = task,
+        task=task,
     )
     if error:
         return "", error
+
+    if not raw or not raw.strip():
+        logger.error("supervisor.empty_llm_response", task=task, model=router.model)
+        return "", f"LLM returned empty response for {task}"
 
     if force_array:
         try:

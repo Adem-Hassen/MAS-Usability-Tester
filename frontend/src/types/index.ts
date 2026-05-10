@@ -107,6 +107,12 @@ export interface StreamEvent {
   duplicates_removed?: number;
   // Live Preview
   screenshot?: string;
+  bounding_box?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 }
 
 export interface PipelineStep {

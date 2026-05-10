@@ -8,7 +8,8 @@ import uuid
 from typing import Optional
 
 from config.settings import settings
-from tools.rate_limiter import groq_chat_completion
+from tools.rate_limiter import chat_completion
+from tools.llm_router import get_resolver_router
 from core.state import GraphState
 from schemas.patch_schema import (
     PatchProposal, PatchType,
@@ -547,13 +548,10 @@ def _call_resolver_llm(
     user:   str,
     task:   str,
 ) -> tuple[str, Optional[str]]:
-    """Groq-aware LLM call with rate limiting."""
-    return groq_chat_completion(
-        api_key     = settings.resolver_api_key,
-        model       = settings.resolver_llm_model,
-        messages    = [{"role": "system", "content": system},
-                       {"role": "user",   "content": user}],
-        temperature = settings.resolver_temperature,
-        max_tokens  = getattr(settings, 'resolver_max_tokens', settings.llm_max_output_tokens),
-        task        = task,
+    """Provider-agnostic LLM call with rate limiting."""
+    router = get_resolver_router()
+    return router.chat_completion(
+        messages=[{"role": "system", "content": system},
+                  {"role": "user",   "content": user}],
+        task=task,
     )

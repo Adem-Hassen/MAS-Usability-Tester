@@ -196,6 +196,26 @@ async def get_issues(job_id: str):
     return {"clusters": clusters}
 
 
+@app.get("/api/v1/evaluate/{job_id}/results")
+async def get_results_v1(job_id: str):
+    """Return full results for a completed job."""
+    session = _get_session(job_id)
+    if session.status != SessionStatus.DONE:
+        raise HTTPException(425, "Processing not complete yet.")
+    
+    # Use in-memory results if available; otherwise fall back to results.json on disk
+    results = session.results
+    if not results or not results.get("pages"):
+        results_path = session.output_dir / "results.json"
+        if results_path.exists():
+            try:
+                results = json.loads(results_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    
+    return results or {}
+
+
 @app.get("/api/v1/evaluate/{job_id}/report")
 async def download_report_v1(job_id: str):
     """Download PDF report."""
@@ -422,7 +442,18 @@ async def get_results(session_id: str):
     session = _get_session(session_id)
     if session.status != SessionStatus.DONE:
         raise HTTPException(425, "Processing not complete yet.")
-    return session.results
+    
+    # Use in-memory results if available; otherwise fall back to results.json on disk
+    results = session.results
+    if not results or not results.get("pages"):
+        results_path = session.output_dir / "results.json"
+        if results_path.exists():
+            try:
+                results = json.loads(results_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    
+    return results or {}
 
 
 @app.get("/api/sessions/{session_id}/files/{filename}")

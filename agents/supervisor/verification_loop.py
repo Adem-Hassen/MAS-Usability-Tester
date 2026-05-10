@@ -6,7 +6,8 @@ from typing import Optional
 
 
 from config.settings import settings
-from tools.rate_limiter import groq_chat_completion
+from tools.rate_limiter import chat_completion
+from tools.llm_router import get_supervisor_router
 from core.state import GraphState
 from schemas.issue_schema import IssueReport, PersonaSimulationResult, IssueSeverity
 from schemas.patch_schema import ResolvedPatch, UnifiedPatchSet
@@ -403,14 +404,11 @@ def _call_verifier_llm(
     """
     Uses the supervisor LLM (strongest model) for patch verification —
     needs precise HTML reading ability.
-    Rate-limiting handled by groq_chat_completion (semaphore + backoff).
+    Rate-limiting handled by chat_completion (semaphore + backoff).
     """
-    return groq_chat_completion(
-        api_key     = settings.supervisor_api_key,
-        model       = settings.supervisor_llm_model,
-        messages    = [{"role": "system", "content": system},
-                       {"role": "user",   "content": user}],
-        temperature = 0.1,
-        max_tokens  = getattr(settings, 'verifier_max_tokens', settings.llm_max_output_tokens),
-        task        = task,
+    router = get_supervisor_router()
+    return router.chat_completion(
+        messages=[{"role": "system", "content": system},
+                  {"role": "user",   "content": user}],
+        task=task,
     )

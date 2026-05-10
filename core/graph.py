@@ -290,8 +290,14 @@ def _run_simulations(ctx: PageContext, outer_state: dict) -> PageContext:
         }
         return _persona_node(persona_state)
 
-    # Let the pool manage LLM rate limits, so we can run all personas concurrently
-    with ThreadPoolExecutor(max_workers=max(1, len(ctx.personas))) as tp:
+    # UXAgent pattern: bound worker threads to avoid OS thread explosion.
+    # With _ThreadLocalPlaywright each worker reuses its Playwright driver,
+    # so 100 personas on 8 threads = 8 drivers instead of 100.
+    max_workers = min(
+        len(ctx.personas),
+        getattr(settings, "max_num_personas", 8),
+    )
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as tp:
         futures = {tp.submit(_run_one, p): p for p in ctx.personas}
         for future in as_completed(futures):
             persona = futures[future]
@@ -378,7 +384,10 @@ def _run_recommenders(ctx: PageContext) -> PageContext:
         return _recommender_node(rec_state)
 
     all_proposals = []
-    with ThreadPoolExecutor(max_workers=min(len(tasks), max_workers)) as pool:
+    # Cap workers to the configured concurrency limit (same as personas)
+    worker_cap = min(len(tasks), max_workers,
+                     getattr(settings, "llm_max_concurrent_calls", 5))
+    with ThreadPoolExecutor(max_workers=max(1, worker_cap)) as pool:
         futures = {pool.submit(_run_one, t): t for t in tasks}
         for future in as_completed(futures):
             active = futures[future]
