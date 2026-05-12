@@ -190,6 +190,8 @@ export default function OutputTabs({
   onFetchResults,
 }: OutputTabsProps) {
   const [activeTab, setActiveTab] = useState('issues');
+  // Track selected page for the Verify tab (multi-page support)
+  const [selectedVerifyPage, setSelectedVerifyPage] = useState<string | null>(null);
 
   const handleTabClick = (tabId: string) => {
     setActiveTab(tabId);
@@ -198,6 +200,10 @@ export default function OutputTabs({
       onFetchResults();
     }
   };
+
+  // When results change with multiple pages, default to first page if none selected
+  const availablePages = results?.pages?.map((p: any) => p.page as string) || [];
+  const effectiveVerifyPage = selectedVerifyPage || pageFilter || availablePages[0] || null;
 
   const filteredIssues = pageFilter ? issues.filter(i => i.page === pageFilter) : issues;
   const filteredPatches = pageFilter ? patches.filter(p => p.page === pageFilter) : patches;
@@ -274,15 +280,39 @@ export default function OutputTabs({
           <div className="h-full flex flex-col space-y-4">
              <div className="flex items-center justify-between">
               <SectionLabel className="mb-0">Regression Analysis</SectionLabel>
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] font-mono text-nexus-outline uppercase">Confidence</span>
-                <div className="w-12 h-1 bg-nexus-surface-variant">
-                  <div className="h-full bg-nexus-secondary w-[85%]" />
+              <div className="flex items-center gap-3">
+                {/* Page selector — shown when multiple pages exist */}
+                {availablePages.length > 1 && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-[9px] font-mono text-nexus-outline uppercase">Page</span>
+                    <div className="flex bg-black/60 border border-white/10 rounded-sm overflow-hidden">
+                      {availablePages.map((pageName: string) => (
+                        <button
+                          key={pageName}
+                          onClick={() => setSelectedVerifyPage(pageName)}
+                          className={clsx(
+                            'px-2 py-1 text-[9px] font-bold uppercase tracking-wider transition-all',
+                            effectiveVerifyPage === pageName
+                              ? 'bg-nexus-primary text-black'
+                              : 'text-white/40 hover:text-white hover:bg-white/5'
+                          )}
+                        >
+                          {pageName}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] font-mono text-nexus-outline uppercase">Confidence</span>
+                  <div className="w-12 h-1 bg-nexus-surface-variant">
+                    <div className="h-full bg-nexus-secondary w-[85%]" />
+                  </div>
                 </div>
               </div>
             </div>
             <div className="flex-1 min-h-0 bg-black/40 border border-white/5 p-1">
-              <PreviewPanel results={results} sessionId={sessionId || ''} pageFilter={pageFilter} />
+              <PreviewPanel results={results} sessionId={sessionId || ''} pageFilter={effectiveVerifyPage} />
             </div>
           </div>
         )}

@@ -38,7 +38,10 @@ from schemas.issue_schema import (
 )
 from prompts.persona_prompts import (
     PAGE_UNDERSTANDING_SYSTEM, PAGE_UNDERSTANDING_USER,
+    PLAN_SYSTEM, PLAN_USER,
     DECISION_SYSTEM, DECISION_USER,
+    EVALUATE_SYSTEM, EVALUATE_USER,
+    REFLECT_SYSTEM, REFLECT_USER,
     ISSUE_DETECTION_SYSTEM, ISSUE_DETECTION_USER,
     COMPLETION_CHECK_SYSTEM, COMPLETION_CHECK_USER,
 )
@@ -67,8 +70,13 @@ class PagePhase(str, Enum):
 class WorkingMemory:
     """
     Compact ground-truth state object updated after every step.
-    Serialised to a human-readable string and injected into DECISION_USER.
+    Serialised to a human-readable string and injected into prompts.
     Never modified by the LLM — only by PersonaRunner._update_memory().
+
+    UXAgent-inspired additions:
+      - current_plan / next_step: tracks the logical plan
+      - last_evaluation: feedback from the EVALUATE phase
+      - recent_actions: sliding window for anti-repeat
     """
     page_phase:       PagePhase        = PagePhase.FILLING_FORM
     fields_filled:    dict[str, str]   = field(default_factory=dict)
@@ -76,6 +84,11 @@ class WorkingMemory:
     last_action:      str              = "No actions taken yet."
     observe_count:    int              = 0   # consecutive observe counter
     steps_remaining:  int              = 0
+    # --- UXAgent-inspired additions ---
+    current_plan:     str              = "(no plan yet)"
+    next_step:        str              = "(no step yet)"
+    last_evaluation:  str              = "(no evaluation yet)"
+    recent_actions:   list[str]        = field(default_factory=list)  # last 5 actions
 
     def format(self) -> str:
         """Return a compact human-readable block for injection into the prompt."""
@@ -96,6 +109,12 @@ class WorkingMemory:
             f"{'⚠ TAKE A REAL ACTION NOW' if self.observe_count >= 2 else ''}\n"
             f"steps_remaining : {self.steps_remaining}"
         )
+
+    def format_recent_actions(self) -> str:
+        """Recent actions as a compact string for anti-repeat injection."""
+        if not self.recent_actions:
+            return "(none)"
+        return "\n".join(f"  {i+1}. {a}" for i, a in enumerate(self.recent_actions))
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +306,12 @@ class PersonaRunner:
         elif self._mem.page_phase == PagePhase.AWAITING_REDIRECT:
             self._mem.page_phase = PagePhase.SUCCESS
 
+        # Track recent actions for anti-repeat injection (sliding window of 5)
+        action_desc = f"{action_type} '{selector or 'page'}'{val_str} → [{outcome}]"
+        self._mem.recent_actions.append(action_desc)
+        if len(self._mem.recent_actions) > 5:
+            self._mem.recent_actions = self._mem.recent_actions[-5:]
+
     def _init_required_fields(self, page_state: DOMState) -> None:
         """
         Populate fields_required from the page's interactive elements.
@@ -360,8 +385,6 @@ class PersonaRunner:
                     return StopReason.DEAD_END
 
                 # ── Observe-spiral guard (Python-enforced) ────────────────
-                # If the LLM has been observing for 2 consecutive steps,
-                # skip the LLM call entirely and force a decision based on phase.
                 if self._mem.observe_count >= 3:
                     logger.warning("persona.observe_spiral_broken",
                                    persona_id=self.persona.persona_id, step=step_num,
@@ -369,13 +392,25 @@ class PersonaRunner:
                     if self._mem.page_phase in (PagePhase.SUBMITTED,
                                                 PagePhase.AWAITING_REDIRECT,
                                                 PagePhase.SUCCESS):
-                        # We submitted — call it done
                         self._mem.page_phase = PagePhase.SUCCESS
                         return StopReason.GOAL_ACHIEVED
                     else:
                         return StopReason.DEAD_END
 
-                # ── LLM decision ──────────────────────────────────────────
+                # ══════════════════════════════════════════════════════════
+                # Phase 1: PLAN — create/update logical plan
+                # ══════════════════════════════════════════════════════════
+                plan_result = self._plan(step_num, page_state)
+                if plan_result:
+                    self._mem.current_plan = plan_result.get("plan", self._mem.current_plan)
+                    self._mem.next_step = plan_result.get("next_step", self._mem.next_step)
+                    logger.debug("persona.plan.updated",
+                                 persona_id=self.persona.persona_id, step=step_num,
+                                 next_step=self._mem.next_step)
+
+                # ══════════════════════════════════════════════════════════
+                # Phase 2: DECIDE — translate next_step → one action
+                # ══════════════════════════════════════════════════════════
                 decision = self._decide(step_num, page_state)
                 if decision is None:
                     return StopReason.DEAD_END
@@ -385,7 +420,6 @@ class PersonaRunner:
                 selector     = decision.get("target_selector")
                 value        = decision.get("value")
                 stop_signal  = decision.get("stop_signal")
-                inline_issue = decision.get("issue_detected")
 
                 # ── UXAgent-style Action Validation (pre-flight) ──────────
                 validation = self._validator.validate(decision, engine=engine)
@@ -402,8 +436,6 @@ class PersonaRunner:
                     )
                     self._record_step(step_num, decision, page_state, fake_result)
                     self._update_memory(step_num, action_type, selector, value, fake_result)
-                    if inline_issue:
-                        self._record_inline_issue(step_num, inline_issue, selector, fake_result)
                     self.issues.extend(
                         self._analyze_failure(step_num, decision, fake_result, page_state))
                     continue
@@ -419,8 +451,6 @@ class PersonaRunner:
                     )
                     self._record_step(step_num, decision, page_state, fake_result)
                     self._update_memory(step_num, action_type, selector, value, fake_result)
-                    if inline_issue:
-                        self._record_inline_issue(step_num, inline_issue, selector, fake_result)
                     self.issues.extend(
                         self._analyze_failure(step_num, decision, fake_result, page_state))
                     continue
@@ -430,31 +460,24 @@ class PersonaRunner:
                     ok = ActionResult(True, action_type, selector, value)
                     self._record_step(step_num, decision, page_state, ok)
                     self._update_memory(step_num, action_type, selector, value, ok)
-                    if inline_issue:
-                        self._record_inline_issue(step_num, inline_issue, selector, ok)
                     return StopReason.GOAL_ACHIEVED
 
                 if stop_signal == "dead_end":
                     result = engine.execute_action(action_type, selector, value)
                     self._record_step(step_num, decision, page_state, result)
                     self._update_memory(step_num, action_type, selector, value, result)
-                    if inline_issue:
-                        self._record_inline_issue(step_num, inline_issue, selector, result)
-                    # CRITICAL FIX: dead_end used to skip issue analysis entirely.
-                    # A persona signalling dead_end has encountered a blocker —
-                    # we must analyse it for usability/accessibility issues.
                     self.issues.extend(
                         self._analyze_failure(step_num, decision, result, page_state))
                     return StopReason.DEAD_END
 
-                # ── Repeat-action guard (sliding 3-step window, clicks only) ──
-                if action_type == "click" and selector:
-                    recent_clicks = [
+                # ── Repeat-action guard (ALL action types, sliding 3-step) ──
+                if action_type in ("click", "type") and selector:
+                    recent_pairs = [
                         (s.action_type, s.target_selector)
                         for s in self.steps[-3:]
-                        if s.action_type == "click"
+                        if s.action_type in ("click", "type")
                     ]
-                    if (action_type, selector) in recent_clicks:
+                    if (action_type, selector) in recent_pairs:
                         logger.info("persona.repeat_guard",
                                     persona_id=self.persona.persona_id,
                                     step=step_num, selector=selector)
@@ -463,16 +486,11 @@ class PersonaRunner:
                             error_message="Repeated action — loop guard triggered")
                         self._record_step(step_num, decision, page_state, fake_result)
                         self._update_memory(step_num, action_type, selector, value, fake_result)
-                        if inline_issue:
-                            self._record_inline_issue(step_num, inline_issue, selector, fake_result)
                         self.issues.extend(
                             self._analyze_failure(step_num, decision, fake_result, page_state))
                         return StopReason.REPEATED_ACTION
 
-                # ── Grounding Guard (Trace-to-State Heuristic) ────────────
-                # Allow selectors that exist in the DOM, even if disabled or not
-                # in the current interactive_elements list. Playwright will report
-                # the actual failure (e.g., disabled button) which becomes an issue.
+                # ── Grounding Guard ───────────────────────────────────────
                 if action_type in ("click", "type") and selector:
                     if not engine.selector_exists(selector):
                         logger.warning("persona.grounding_failed",
@@ -487,13 +505,13 @@ class PersonaRunner:
                         )
                         self._record_step(step_num, decision, page_state, fake_result)
                         self._update_memory(step_num, action_type, selector, value, fake_result)
-                        if inline_issue:
-                            self._record_inline_issue(step_num, inline_issue, selector, fake_result)
                         self.issues.extend(
                             self._analyze_failure(step_num, decision, fake_result, page_state))
                         continue
 
-                # ── Execute ───────────────────────────────────────────────
+                # ══════════════════════════════════════════════════════════
+                # Execute action
+                # ══════════════════════════════════════════════════════════
                 result = engine.execute_action(action_type, selector, value)
                 self._record_step(step_num, decision, page_state, result)
                 self._update_memory(step_num, action_type, selector, value, result)
@@ -510,14 +528,29 @@ class PersonaRunner:
                             screenshot=screenshot,
                             bounding_box=result.bounding_box)
 
-                # Inline issue on every step (primary accessibility detection path)
-                if inline_issue:
-                    self._record_inline_issue(step_num, inline_issue, selector, result)
+                # ══════════════════════════════════════════════════════════
+                # Phase 3: EVALUATE — post-action assessment + issue detect
+                # ══════════════════════════════════════════════════════════
+                post_page = engine.get_page_state()
+                eval_result = self._evaluate(step_num, decision, result, post_page)
+                if eval_result:
+                    self._mem.last_evaluation = eval_result.get(
+                        "success_reasoning", "(no evaluation)")
+                    # Record any issue found by the evaluation phase
+                    eval_issue = eval_result.get("issue_detected")
+                    if eval_issue and isinstance(eval_issue, dict):
+                        self._record_inline_issue(step_num, eval_issue, selector, result)
 
-                # Deep failure analysis
+                # Deep failure analysis on action failure
                 if not result.success:
                     self.issues.extend(
                         self._analyze_failure(step_num, decision, result, page_state))
+
+                # ══════════════════════════════════════════════════════════
+                # Phase 4: REFLECT — every 3 steps, generate insights
+                # ══════════════════════════════════════════════════════════
+                if step_num % 3 == 0 and step_num > 1:
+                    self._reflect(step_num)
 
             return StopReason.MAX_STEPS
 
@@ -610,41 +643,173 @@ class PersonaRunner:
                            persona_id=self.persona.persona_id, error=str(e), raw_preview=raw[:200])
             return None
 
-    def _decide(self, step_num: int, page_state: DOMState) -> Optional[dict]:
-        system = DECISION_SYSTEM.format(
+    # ------------------------------------------------------------------
+    # Phase 1: PLAN — logical step-by-step plan (NEW)
+    # ------------------------------------------------------------------
+
+    def _plan(self, step_num: int, page_state: DOMState) -> Optional[dict]:
+        constraints = (
+            ", ".join(self.persona.accessibility_constraints)
+            if self.persona.accessibility_constraints else "none"
+        )
+        cog_limits = (
+            ", ".join(self.persona.cognitive_limitations)
+            if self.persona.cognitive_limitations else "none"
+        )
+        system = PLAN_SYSTEM.format(
             persona_name=self.persona.name,
             age_range=self.persona.age_range,
             technical_skill=self.persona.technical_skill,
             interaction_style=self.persona.interaction_style,
-            accessibility_constraints=(
-                ", ".join(self.persona.accessibility_constraints)
-                if self.persona.accessibility_constraints else "none"
-            ),
-            cognitive_limitations=(
-                ", ".join(self.persona.cognitive_limitations)
-                if self.persona.cognitive_limitations else "none"
-            ),
+            accessibility_constraints=constraints,
+            cognitive_limitations=cog_limits,
             task_goal=self.persona.task_goal,
             task_context=self.persona.task_context,
-            risk_tolerance=self.persona.risk_tolerance,
         )
-        user = DECISION_USER.format(
+        user = PLAN_USER.format(
             step_number=step_num,
             max_steps=settings.persona_max_steps,
             steps_remaining=self._mem.steps_remaining,
             working_memory=self._mem.format(),
             ui_map_summary=self._ui_map_summary,
             success_criteria="\n".join(f"- {c}" for c in self.persona.success_criteria),
+            previous_plan=self._mem.current_plan,
+            last_evaluation=self._mem.last_evaluation,
+            memory_context=self.memory_context,
+        )
+        return self._call_llm(system, user, label="plan")
+
+    # ------------------------------------------------------------------
+    # Phase 2: DECIDE — translate next_step → one action (SIMPLIFIED)
+    # ------------------------------------------------------------------
+
+    def _decide(self, step_num: int, page_state: DOMState) -> Optional[dict]:
+        system = DECISION_SYSTEM.format(
+            persona_name=self.persona.name,
+            next_step=self._mem.next_step,
+        )
+        user = DECISION_USER.format(
+            step_number=step_num,
+            max_steps=settings.persona_max_steps,
+            steps_remaining=self._mem.steps_remaining,
+            next_step=self._mem.next_step,
+            working_memory=self._mem.format(),
+            valid_targets=self._build_valid_targets(page_state),
+            recent_actions=self._mem.format_recent_actions(),
             page_dom_summary=page_state.to_prompt_string(),
-            # Inline checklist values (pre-computed so LLM doesn't have to derive them)
             page_phase=self._mem.page_phase.value,
             fields_empty="YES — click submit now" if not self._mem.fields_required else
                          f"NO — still need: {', '.join(self._mem.fields_required)}",
             observe_count=self._mem.observe_count,
             last_action=self._mem.last_action,
-            memory_context=self.memory_context,
         )
         return self._call_llm(system, user, label="decide")
+
+    # ------------------------------------------------------------------
+    # Phase 3: EVALUATE — post-action assessment + issue detection (NEW)
+    # ------------------------------------------------------------------
+
+    def _evaluate(
+        self,
+        step_num: int,
+        decision: dict,
+        result:   ActionResult,
+        post_page: DOMState,
+    ) -> Optional[dict]:
+        constraints = (
+            ", ".join(self.persona.accessibility_constraints)
+            if self.persona.accessibility_constraints else "none"
+        )
+        cog_limits = (
+            ", ".join(self.persona.cognitive_limitations)
+            if self.persona.cognitive_limitations else "none"
+        )
+        already_reported = "\n".join(
+            f"  - [{i.severity}] {i.title}" for i in self.issues
+        ) or "  (none)"
+
+        action_desc = (
+            f"{result.action_type} on '{decision.get('target_description', result.target_selector or 'page')}'"
+            f"{f' value={result.value!r}' if result.value else ''}"
+        )
+        action_result_str = (
+            "SUCCESS" if result.success
+            else f"FAILED: {result.error_message or 'unknown'}"
+        )
+
+        system = EVALUATE_SYSTEM.format(
+            persona_name=self.persona.name,
+            technical_skill=self.persona.technical_skill,
+            accessibility_constraints=constraints,
+            cognitive_limitations=cog_limits,
+        )
+        user = EVALUATE_USER.format(
+            action_description=action_desc,
+            action_result=action_result_str,
+            element_html=result.element_html or "(not available)",
+            current_page_summary=post_page.to_prompt_string()[:800],
+            already_reported=already_reported,
+        )
+        return self._call_llm(system, user, label="evaluate")
+
+    # ------------------------------------------------------------------
+    # Phase 4: REFLECT — periodic pattern-level insights (NEW)
+    # ------------------------------------------------------------------
+
+    def _reflect(self, step_num: int) -> None:
+        constraints = (
+            ", ".join(self.persona.accessibility_constraints)
+            if self.persona.accessibility_constraints else "none"
+        )
+        issues_str = "\n".join(
+            f"  - [{i.severity}] {i.title}" for i in self.issues
+        ) or "  (none yet)"
+        action_trace = _format_action_history(self.steps[-6:])
+
+        system = REFLECT_SYSTEM.format(
+            persona_name=self.persona.name,
+            technical_skill=self.persona.technical_skill,
+            accessibility_constraints=constraints,
+            task_goal=self.persona.task_goal,
+        )
+        user = REFLECT_USER.format(
+            reflect_window=min(6, len(self.steps)),
+            recent_action_trace=action_trace,
+            issues_so_far=issues_str,
+        )
+        result = self._call_llm(system, user, label="reflect")
+        if result:
+            insights = result.get("insights", [])
+            progress = result.get("progress", "unknown")
+            logger.info("persona.reflect.complete",
+                        persona_id=self.persona.persona_id,
+                        step=step_num, insights=len(insights),
+                        progress=progress)
+
+    # ------------------------------------------------------------------
+    # Valid target builder — anti-hallucination (NEW — P0)
+    # ------------------------------------------------------------------
+
+    def _build_valid_targets(self, page_state: DOMState) -> str:
+        """
+        Build a compact enumerated list of valid interactive element targets.
+        Injected into DECISION_USER so the LLM selects from a list
+        rather than inventing CSS selectors.
+        """
+        lines = []
+        for i, el in enumerate(page_state.interactive_elements[:20]):
+            label = (el.aria_label or el.text or "")[:50].strip()
+            type_hint = f" [{el.input_type}]" if el.input_type else ""
+            disabled = " DISABLED" if el.is_disabled else ""
+            lines.append(
+                f"  {i+1}. <{el.tag}{type_hint}>{disabled}"
+                f"  selector: {el.selector}"
+                f"  label: {label or '(none)'}"
+            )
+        if not lines:
+            return "  (no interactive elements visible)"
+        return "\n".join(lines)
+
 
     def _analyze_failure(
         self,
