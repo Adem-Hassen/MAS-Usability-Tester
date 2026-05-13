@@ -1,0 +1,31 @@
+% ============================================================================
+% Abstract
+% ============================================================================
+\chapter*{Abstract}
+\thispagestyle{plain}
+\addcontentsline{toc}{chapter}{Abstract}
+
+% English Abstract
+\noindent
+\textbf{VerSimUX: A Grounded Multi-Agent Architecture for Automated Usability Evaluation and Code-Level Remediation of Web Interfaces}
+
+\vspace{1em}
+
+Automated usability and accessibility evaluation tools typically produce diagnostic reports that identify violations without providing concrete, executable fixes. This thesis presents \versimux{}, a multi-agent system that closes the gap between diagnosis and remediation by orchestrating diverse simulated user personas in real browser environments, detecting usability and accessibility issues through grounded interaction, synthesising typed code-level patches, and verifying the effectiveness of applied fixes through iterative re-evaluation.
+
+The system is built on a LangGraph state-graph pipeline that coordinates five specialised agent roles: a supervisor agent for UI analysis and persona generation, persona agents that execute a six-phase cognitive loop (perceive--plan--decide--execute--evaluate--reflect) with Python-enforced grounding guards, recommender agents that produce typed patch proposals (HTML, CSS, JavaScript), a conflict resolver that mediates overlapping patches through multi-round LLM negotiation, and a verifier that assesses patch effectiveness against the original issue set.
+
+Key architectural contributions include: (1)~a working-memory architecture maintained entirely in Python to prevent LLM state hallucination, (2)~rule-based trace integrity verification that discards hallucinated interaction traces, (3)~HDBSCAN-based issue clustering with sentence-transformer embeddings, and (4)~a closed-loop correction mechanism that re-simulates failing personas on patched HTML.
+
+Evaluation on [N] test pages with intentionally planted accessibility violations demonstrates that \versimux{} achieves [X\%] recall against expert-identified issues, generates patches with [Y\%] applicability, and resolves [Z\%] of targeted issues as confirmed by automated verification. The system produces actionable, code-level remediation artifacts that developers rate as [significantly/moderately] more useful than static checker output.
+
+\vspace{1em}
+\noindent\textbf{Keywords:} multi-agent systems, usability evaluation, accessibility testing, automated program repair, LLM grounding, persona simulation, browser automation, patch synthesis
+
+
+
+% Optional: Abstract in another language
+% \chapter*{Résumé}
+% \addcontentsline{toc}{chapter}{Résumé}
+% [French/German/Arabic abstract here]
+% \newpage

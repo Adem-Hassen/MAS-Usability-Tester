@@ -1,0 +1,127 @@
+% ============================================================================
+% Chapter 3 — System Overview
+% ============================================================================
+\chapter{System Overview}
+\label{ch:overview}
+
+This chapter provides a high-level walkthrough of the \versimux{} system before the detailed architectural exposition in \cref{ch:architecture}. It introduces the design goals, presents the end-to-end pipeline, describes the technology stack, and discusses key architectural trade-offs.
+
+
+% ---- 3.1 Design Goals and Principles ----------------------------------------
+\section{Design Goals and Principles}
+\label{sec:design-goals}
+
+The design of \versimux{} is guided by five principles:
+
+\begin{description}
+  \item[Grounding.] Every agent action must be validated against the live \acrfull{DOM}{Document Object Model} before execution. Selectors that do not exist in the current page state are rejected, preventing hallucinated interactions.
+
+  \item[Closed-Loop Remediation.] The system does not terminate at diagnosis. It synthesises concrete, typed code patches (HTML, CSS, JavaScript), applies them, and verifies their effectiveness---re-entering the evaluation loop if the resolution threshold is not met.
+
+  \item[Actionability.] Output artifacts must be directly usable by developers: code patches that can be applied to source files, not textual suggestions that require manual interpretation.
+
+  \item[Observability.] Every pipeline stage emits structured events that are persisted, streamed to the frontend in real time, and available for post-hoc analysis.
+
+  \item[Provider Agnosticism.] The \acr{LLM} integration layer abstracts over multiple providers (Groq, OpenAI, DeepSeek, Qwen, Moonshot), enabling model substitution without architectural changes.
+\end{description}
+
+
+% ---- 3.2 End-to-End Pipeline Walkthrough ------------------------------------
+\section{End-to-End Pipeline Walkthrough}
+\label{sec:pipeline-walkthrough}
+
+% TODO: Add Fig 3.1 — Full system architecture diagram
+% \begin{figure}[htbp]
+%   \centering
+%   \includegraphics[width=\textwidth]{ch03/fig_3_1_system_architecture.pdf}
+%   \caption{Overall system architecture showing the three-tier design: frontend client, backend API server, and the LangGraph agent pipeline.}
+%   \label{fig:system-architecture}
+% \end{figure}
+
+The \versimux{} pipeline processes a single HTML document through twelve sequential stages:
+
+\begin{enumerate}
+  \item \textbf{HTML Upload.} The user submits an HTML file and an optional UI context description via the REST \acrfull{API}{Application Programming Interface}.
+
+  \item \textbf{Supervisor Analysis.} The supervisor agent analyses the HTML structure, identifies interactive elements, critical user paths, and accessibility risk indicators.
+
+  \item \textbf{Persona Generation.} Based on the analysis, the supervisor generates a diverse set of persona profiles with distinct accessibility constraints, cognitive characteristics, and task goals.
+
+  \item \textbf{Persona Simulation.} Each persona agent executes its task goal inside an isolated Playwright browser context, producing an interaction trace with screenshots and inline issue annotations.
+
+  \item \textbf{Trace Verification.} Rule-based heuristics validate each trace for structural integrity: loop detection, selector existence, navigate interception, and action validity.
+
+  \item \textbf{Issue Extraction.} Verified issues from all personas are aggregated into a unified issue set.
+
+  \item \textbf{Issue Clustering.} Sentence-transformer embeddings and HDBSCAN clustering group semantically similar issues, eliminating cross-persona duplicates.
+
+  \item \textbf{Recommender Profile Generation.} The supervisor creates a \code{RecommenderProfile} for each cluster, specifying the fix focus, strategy hint, and priority.
+
+  \item \textbf{Patch Synthesis.} Parallel recommender agents propose typed patches for their assigned clusters.
+
+  \item \textbf{Conflict Resolution.} A conflict resolver detects overlapping patches and resolves them through LLM-mediated negotiation or heuristic tiebreaking.
+
+  \item \textbf{Patch Application \& Verification.} Patches are applied to the HTML in dependency order. A verification agent assesses whether targeted issues have been resolved. If the resolution threshold is not met, the pipeline enters a correction loop.
+
+  \item \textbf{Report Generation.} A comprehensive diagnostic report is generated with scores, issue details, applied patches, and verification results.
+\end{enumerate}
+
+% TODO: Add Fig 3.2 — Pipeline stage sequence diagram
+% \begin{figure}[htbp]
+%   \centering
+%   \includegraphics[width=\textwidth]{ch03/fig_3_2_pipeline_sequence.pdf}
+%   \caption{The twelve-stage pipeline from HTML upload to report generation.}
+%   \label{fig:pipeline-sequence}
+% \end{figure}
+
+
+% ---- 3.3 Technology Stack ----------------------------------------------------
+\section{Technology Stack}
+\label{sec:tech-stack}
+
+\Cref{tab:tech-stack} summarises the key technologies employed at each architectural layer.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Technology stack by architectural layer.}
+  \label{tab:tech-stack}
+  \begin{tabularx}{\textwidth}{@{}l L{3cm} X@{}}
+    \toprule
+    \textbf{Layer} & \textbf{Technology} & \textbf{Purpose} \\
+    \midrule
+    Orchestration      & LangGraph            & State-graph pipeline with typed state, conditional edges, and parallel fan-out via \code{Send()} \\
+    \acr{LLM} Backend  & Groq, OpenAI, etc.   & Provider-agnostic \acr{LLM} calls with per-role model routing and rate limiting \\
+    Browser Automation & Playwright (Chromium) & Headless browser control with isolated contexts per persona \\
+    Embeddings         & sentence-transformers & Issue text embedding for semantic clustering \\
+    Clustering         & HDBSCAN              & Density-based clustering with automatic cluster count \\
+    Backend \acr{API}  & FastAPI              & REST endpoints and \acr{SSE} streaming \\
+    Persistence        & SQLite               & Session and event storage \\
+    Frontend           & Next.js (React)      & Dashboard, upload interface, and report viewer \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+
+% ---- 3.4 Architectural Constraints and Trade-offs ----------------------------
+\section{Architectural Constraints and Trade-offs}
+\label{sec:trade-offs}
+
+Several architectural decisions reflect deliberate trade-offs:
+
+\paragraph{LangGraph over linear orchestration.}
+% TODO: Explain why the state-graph model was chosen over a simple
+% sequential script: parallel page processing, conditional correction loops,
+% typed state accumulation with parallel-write safety.
+
+\paragraph{ThreadPoolExecutor over asyncio for persona simulation.}
+% TODO: Explain why persona simulation uses threads: Playwright's sync API
+% is more stable, thread-local browser driver caching, simpler error isolation.
+
+\paragraph{SQLite over Redis for event persistence.}
+% TODO: Explain the simplicity-over-performance trade-off: single-process
+% deployment, no external dependencies, sufficient for the expected
+% event throughput.
+
+\paragraph{Python-maintained working memory over LLM self-tracking.}
+% TODO: Explain the grounding rationale: LLMs cannot be trusted to
+% accurately maintain their own state across multi-turn interactions.

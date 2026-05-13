@@ -1,0 +1,52 @@
+% ============================================================================
+% Chapter 6 — Infrastructure and Observability
+% ============================================================================
+\chapter{Infrastructure and Observability}
+\label{ch:infrastructure}
+
+This chapter describes the runtime infrastructure that makes \versimux{} operational: the event-driven communication architecture, session management, real-time streaming, and frontend integration.
+
+
+% ---- 6.1 Event Bus and Logging Bridge ---------------------------------------
+\section{Event Bus and Logging Bridge}
+\label{sec:event-bus}
+
+% TODO: EventBus singleton, pub/sub pattern
+% TODO: structlog _event_bus_processor for transparent event capture
+% TODO: Thread-safe event delivery
+
+
+% ---- 6.2 Server-Sent Events Streaming and State Recovery --------------------
+\section{Server-Sent Events Streaming and State Recovery}
+\label{sec:sse-streaming}
+
+% TODO: stream_evaluate endpoint
+% TODO: Last-Event-ID reconnection protocol
+% TODO: Event replay from SQLite
+% TODO: Keepalive mechanism
+
+
+% ---- 6.3 Session Store and Persistence --------------------------------------
+\section{Session Store and Persistence}
+\label{sec:session-store}
+
+% TODO: SQLite schema (sessions, events tables)
+% TODO: Async queue broadcasting via loop.call_soon_threadsafe()
+% TODO: Task tracking and cancellation
+
+
+% ---- 6.4 Pipeline Runner ----------------------------------------------------
+\section{Pipeline Runner}
+\label{sec:pipeline-runner}
+
+% TODO: Event mapping (_STEP_MAP, _FUNC_STEP_MAP)
+% TODO: Heartbeat thread
+% TODO: Screenshot handling (base64 → JPEG → URL)
+
+
+% ---- 6.5 Frontend Integration -----------------------------------------------
+\section{Frontend Integration}
+\label{sec:frontend}
+
+% NOTE: Keep this brief (2-3 paragraphs). The thesis focuses on the backend.
+% TODO: PipelineContext, applyEvent reducer, streamEvaluate with backoff

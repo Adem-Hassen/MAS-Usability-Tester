@@ -1,0 +1,108 @@
+% ============================================================================
+% Chapter 7 — Evaluation
+% ============================================================================
+\chapter{Evaluation}
+\label{ch:evaluation}
+
+This chapter presents the empirical evaluation of \versimux{}. We define the research hypotheses, describe the experimental setup, present the results, and analyse the findings against each research question.
+
+
+% ---- 7.1 Research Questions and Hypotheses -----------------------------------
+\section{Research Questions and Hypotheses}
+\label{sec:hypotheses}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Research questions and directional hypotheses.}
+  \label{tab:hypotheses}
+  \begin{tabularx}{\textwidth}{@{}c L{5cm} X@{}}
+    \toprule
+    \textbf{ID} & \textbf{Research Question} & \textbf{Hypothesis} \\
+    \midrule
+    RQ1 & How does \versimux{}'s diagnostic accuracy compare to expert manual evaluation? & H1: \versimux{} achieves $\geq$70\% recall and $\geq$60\% precision against expert-identified issues. \\
+    \addlinespace
+    RQ2 & Do grounding guards and trace verification effectively prevent hallucinated diagnoses? & H2: Grounding guards block $\geq$30\% of attempted actions as hallucinated selectors. Trace verification discards $\leq$20\% of traces while retaining $\geq$80\% of genuine issues. \\
+    \addlinespace
+    RQ3 & Are the generated patches syntactically valid, semantically correct, and applicable? & H3: $\geq$75\% of patches apply successfully. $\geq$60\% resolve their target issues as confirmed by verification. \\
+    \addlinespace
+    RQ4 & Do developers perceive reports as actionable and trustworthy? & H4: Developers rate \versimux{} reports as more actionable than static checker reports. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+
+% ---- 7.2 Experimental Setup -------------------------------------------------
+\section{Experimental Setup}
+\label{sec:experimental-setup}
+
+\subsection{Test Pages}
+% TODO: Describe the 4-6 test pages with planted violations
+
+\subsection{System Configuration}
+% TODO: Document model settings, persona count, max_steps, temperatures
+
+\subsection{Hardware and Environment}
+% TODO: CPU, RAM, OS, Python version, browser version
+
+\subsection{Repetitions and Non-Determinism}
+% TODO: 3-5 runs per page, aggregation strategy
+
+
+% ---- 7.3 Expert Ground Truth Construction ------------------------------------
+\section{Expert Ground Truth Construction}
+\label{sec:ground-truth}
+
+% TODO: Expert panel, audit protocol, inter-rater reliability, consensus process
+
+
+% ---- 7.4 Diagnostic Accuracy (RQ1) -----------------------------------------
+\section{Diagnostic Accuracy}
+\label{sec:rq1-results}
+
+% TODO: Precision, recall, F1 tables and analysis
+
+% Example results table:
+% \begin{table}[htbp]
+%   \centering
+%   \caption{Diagnostic accuracy: \versimux{} vs.\ baselines.}
+%   \label{tab:rq1-results}
+%   \begin{tabular}{@{}lccc@{}}
+%     \toprule
+%     \textbf{Condition} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+%     \midrule
+%     \versimux{} (full)    & -- & -- & -- \\
+%     axe-core baseline     & -- & -- & -- \\
+%     Lighthouse baseline   & -- & -- & -- \\
+%     \bottomrule
+%   \end{tabular}
+% \end{table}
+
+
+% ---- 7.5 Persona Fidelity and Grounding (RQ2) -------------------------------
+\section{Persona Fidelity and Grounding Effectiveness}
+\label{sec:rq2-results}
+
+% TODO: Grounding block rate, trace discard rate, issue retention rate
+% TODO: Ablation: full system vs. no-grounding vs. no-verification
+
+
+% ---- 7.6 Patch Quality (RQ3) -----------------------------------------------
+\section{Patch Quality}
+\label{sec:rq3-results}
+
+% TODO: Patch applicability, verification pass rate, conflict resolution rate
+% TODO: HTML validity after patching
+
+
+% ---- 7.7 Developer Perception (RQ4) ----------------------------------------
+\section{Developer Perception}
+\label{sec:rq4-results}
+
+% TODO: Blind artifact review, Likert ratings, preference ranking
+
+
+% ---- 7.8 Performance and Scalability ----------------------------------------
+\section{Performance and Scalability}
+\label{sec:performance}
+
+% TODO: Pipeline latency, LLM token usage, concurrency scaling

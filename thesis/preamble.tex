@@ -1,0 +1,214 @@
+% ============================================================================
+% Preamble — LIGHTWEIGHT version (Overleaf free tier compatible)
+% ============================================================================
+
+% ---- Encoding & Fonts -------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage{lmodern}
+
+% ---- Page Geometry -----------------------------------------------------------
+\usepackage[
+  a4paper,
+  top=30mm,
+  bottom=30mm,
+  inner=35mm,
+  outer=25mm,
+  headheight=15pt,
+]{geometry}
+
+% ---- Spacing -----------------------------------------------------------------
+\usepackage{setspace}
+\onehalfspacing
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{1.5em}
+
+% ---- Headers & Footers ------------------------------------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE]{\textit{\nouppercase{\leftmark}}}
+\fancyhead[RO]{\textit{\nouppercase{\rightmark}}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\fancypagestyle{plain}{
+  \fancyhf{}
+  \fancyfoot[C]{\thepage}
+  \renewcommand{\headrulewidth}{0pt}
+}
+
+% ---- Colours -----------------------------------------------------------------
+\usepackage[dvipsnames, table]{xcolor}
+\definecolor{codeBackground}{HTML}{F8F9FA}
+\definecolor{codeFrame}{HTML}{DEE2E6}
+\definecolor{codePrimary}{HTML}{212529}
+\definecolor{codeKeyword}{HTML}{0D6EFD}
+\definecolor{codeString}{HTML}{198754}
+\definecolor{codeComment}{HTML}{6C757D}
+\definecolor{linkBlue}{HTML}{1A56DB}
+\definecolor{chapterGrey}{HTML}{343A40}
+
+% ---- Graphics ----------------------------------------------------------------
+\usepackage{graphicx}
+\graphicspath{{figures/}{static/}}
+\usepackage{subcaption}
+\usepackage{float}
+
+% ---- Tables ------------------------------------------------------------------
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{multirow}
+\usepackage{array}
+
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+
+% ---- Code Listings -----------------------------------------------------------
+\usepackage{listings}
+
+\lstdefinestyle{pythonstyle}{
+  language=Python,
+  basicstyle=\small\ttfamily\color{codePrimary},
+  keywordstyle=\color{codeKeyword}\bfseries,
+  stringstyle=\color{codeString},
+  commentstyle=\color{codeComment}\itshape,
+  backgroundcolor=\color{codeBackground},
+  frame=single,
+  rulecolor=\color{codeFrame},
+  framesep=8pt,
+  xleftmargin=12pt,
+  xrightmargin=12pt,
+  breaklines=true,
+  breakatwhitespace=true,
+  showstringspaces=false,
+  tabsize=4,
+  numbers=left,
+  numberstyle=\tiny\color{codeComment},
+  numbersep=8pt,
+  captionpos=b,
+  aboveskip=1em,
+  belowskip=1em,
+}
+
+\lstdefinestyle{jsonstyle}{
+  basicstyle=\small\ttfamily\color{codePrimary},
+  stringstyle=\color{codeString},
+  backgroundcolor=\color{codeBackground},
+  frame=single,
+  rulecolor=\color{codeFrame},
+  framesep=8pt,
+  xleftmargin=12pt,
+  xrightmargin=12pt,
+  breaklines=true,
+  showstringspaces=false,
+  captionpos=b,
+  aboveskip=1em,
+  belowskip=1em,
+}
+
+\lstset{style=pythonstyle}
+
+% ---- Mathematics -------------------------------------------------------------
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% ---- Bibliography (natbib — much faster than biblatex) -----------------------
+\usepackage[
+  backend=biber,
+  style=ieee,
+  sorting=nyt,
+  maxbibnames=99,
+]{biblatex}
+
+% ---- Hyperlinks --------------------------------------------------------------
+\usepackage[
+  colorlinks=true,
+  linkcolor=chapterGrey,
+  citecolor=linkBlue,
+  urlcolor=linkBlue,
+  bookmarks=true,
+  bookmarksnumbered=true,
+]{hyperref}
+
+\usepackage[capitalise, noabbrev]{cleveref}
+
+% ---- Chapter Heading Style ---------------------------------------------------
+\usepackage{titlesec}
+
+\titleformat{\chapter}[display]
+  {\normalfont\huge\bfseries\color{chapterGrey}}
+  {\chaptertitlename\ \thechapter}
+  {20pt}
+  {\Huge}
+
+\titleformat{\section}
+  {\normalfont\Large\bfseries\color{chapterGrey}}
+  {\thesection}
+  {1em}
+  {}
+
+\titleformat{\subsection}
+  {\normalfont\large\bfseries}
+  {\thesubsection}
+  {1em}
+  {}
+
+\titleformat{\subsubsection}
+  {\normalfont\normalsize\bfseries\itshape}
+  {\thesubsubsection}
+  {1em}
+  {}
+
+% ---- Custom Commands ---------------------------------------------------------
+
+% System name
+\newcommand{\versimux}{\textsc{VerSimUX}}
+
+% Inline code
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+% File path
+\newcommand{\filepath}[1]{\texttt{\small #1}}
+
+% Agent name formatting
+\newcommand{\agentname}[1]{\textit{#1}}
+
+% ---- Acronyms (manual — no glossaries package) ------------------------------
+% Use these commands instead of \gls{} — much faster compile
+\newcommand{\acr}[1]{\textsc{#1}}   % For acronym styling
+
+% First-use macros (use \acrfull first time, \acr after)
+\newcommand{\acrfull}[2]{#2 (#1)}
+
+% Common acronyms - just use directly in text:
+%   \acr{MAS}    — Multi-Agent System
+%   \acr{LLM}    — Large Language Model
+%   \acr{WCAG}   — Web Content Accessibility Guidelines
+%   \acr{SSE}    — Server-Sent Events
+%   \acr{DOM}    — Document Object Model
+%   \acr{API}    — Application Programming Interface
+%   \acr{UI/UX}  — User Interface / User Experience
+%   \acr{HCI}    — Human-Computer Interaction
+%   \acr{BDI}    — Belief-Desire-Intention
+%   \acr{APR}    — Automated Program Repair
+
+% ---- Frontmatter/Mainmatter for report class --------------------------------
+\newcommand{\frontmatter}{%
+  \cleardoublepage
+  \pagenumbering{roman}
+}
+\newcommand{\mainmatter}{%
+  \cleardoublepage
+  \pagenumbering{arabic}
+}
+\newcommand{\backmatter}{%
+  \cleardoublepage
+}
+
+% ---- Prevent orphans/widows --------------------------------------------------
+\widowpenalty=10000
+\clubpenalty=10000

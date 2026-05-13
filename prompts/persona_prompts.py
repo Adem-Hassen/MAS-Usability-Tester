@@ -1,6 +1,5 @@
 # prompts/persona_prompts.py
 """
-UXAgent-inspired modular cognitive pipeline for persona agents.
 
 Architecture:
   Phase 0: PAGE_UNDERSTANDING — once per simulation, build UI map

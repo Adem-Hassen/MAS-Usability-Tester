@@ -1,0 +1,243 @@
+% ============================================================================
+% Chapter 4 — System Architecture and Implementation
+% ============================================================================
+\chapter{System Architecture and Implementation}
+\label{ch:architecture}
+
+This chapter presents the detailed design and implementation of \versimux{}'s eleven subsystems. For each subsystem, we describe the architectural rationale, the data flow, key implementation details, and design trade-offs considered during development.
+
+
+% ---- 4.1 LangGraph Orchestration and State Graph ----------------------------
+\section{LangGraph Orchestration and State Graph}
+\label{sec:langgraph}
+
+% TODO: Explain why a state graph is needed:
+% - Parallel page processing via Send()
+% - Conditional correction loops
+% - Typed state accumulation with Annotated[list, operator.add]
+
+\subsection{Graph Topology}
+\label{sec:graph-topology}
+
+% TODO: Present build_graph() structure: two nodes (supervisor_node,
+% page_pipeline_node), one conditional edge (_fan_out_pages)
+
+% Code listing example:
+% \begin{lstlisting}[
+%   caption={The \code{GraphState} TypedDict with parallel-write-safe annotations.},
+%   label={lst:graph-state},
+% ]
+% class GraphState(TypedDict):
+%     url: str
+%     html_contents: Annotated[list[str], operator.add]
+%     page_contexts: Annotated[list[PageContext], operator.add]
+%     # ... additional fields
+% \end{lstlisting}
+
+\subsection{Parallel Fan-Out via Send()}
+\label{sec:fan-out}
+
+% TODO: Explain the Send() mechanism for distributing pages to
+% parallel page_pipeline_node invocations
+
+\subsection{PageContext Data Flow}
+\label{sec:page-context}
+
+% TODO: Explain the _ctx_to_flat / _flat_to_ctx adapter pattern
+
+% TODO: Add Fig 4.1 — LangGraph state graph topology
+% TODO: Add Fig 4.2 — PageContext data flow
+
+
+% ---- 4.2 Supervisor Pipeline ------------------------------------------------
+\section{Supervisor Pipeline}
+\label{sec:supervisor}
+
+\subsection{UI Analysis}
+\label{sec:ui-analysis}
+
+% TODO: UI analysis LLM call, UIAnalysis schema, stub fallback
+
+\subsection{Persona Budget Heuristic}
+\label{sec:persona-budget}
+
+% TODO: Score formula, budget range [1, max_personas]
+
+\subsection{Persona Generation}
+\label{sec:persona-generation}
+
+% TODO: Template library, LLM selection, cross-page diversity enforcement
+
+\subsection{Storage-Requirement Detection}
+\label{sec:storage-seed}
+
+% TODO: Regex scan for localStorage/sessionStorage usage
+
+
+% ---- 4.3 Persona Agent: Cognitive Simulation Loop ---------------------------
+\section{Persona Agent: Cognitive Simulation Loop}
+\label{sec:persona-agent}
+
+\subsection{PersonaRunner Architecture}
+\label{sec:persona-runner}
+
+% TODO: Class lifecycle: sandbox setup → simulation loop → completion →
+% post-audit → result construction
+
+\subsection{Six-Phase Cognitive Pipeline}
+\label{sec:cognitive-pipeline}
+
+% TODO: Detailed description of each phase:
+% 1. Page Understanding
+% 2. Plan
+% 3. Decide
+% 4. Execute
+% 5. Evaluate
+% 6. Reflect
+
+% TODO: Add Fig 4.3 — Persona simulation loop flowchart
+
+\subsection{Working Memory}
+\label{sec:working-memory}
+
+% TODO: WorkingMemory dataclass, page_phase state machine, format() method
+
+% TODO: Add Fig 4.4 — PagePhase state machine
+
+\subsection{Action Guards}
+\label{sec:action-guards}
+
+% TODO: Five guards: scroll stagnation, observe spiral, repeat-action,
+% grounding guard, navigate interception
+
+\subsection{Issue Detection Paths}
+\label{sec:issue-detection}
+
+% TODO: Three parallel paths: inline LLM detection, failure analysis,
+% post-simulation audit
+
+
+% ---- 4.4 Browser Instrumentation -------------------------------------------
+\section{Browser Instrumentation}
+\label{sec:browser}
+
+\subsection{Playwright Engine}
+\label{sec:playwright-engine}
+
+% TODO: PlaywrightEngine context manager, action execution, DOMState extraction
+
+\subsection{Shared Browser Architecture}
+\label{sec:shared-browser}
+
+% TODO: _SharedBrowser, _ThreadLocalPlaywright, health monitoring
+
+% TODO: Add Fig 4.5 — Browser process sharing architecture
+
+\subsection{Sandbox Setup}
+\label{sec:sandbox}
+
+% TODO: HTML temp file, storage seed injection
+
+
+% ---- 4.5 Trace Integrity Verification --------------------------------------
+\section{Trace Integrity Verification}
+\label{sec:trace-verification}
+
+% TODO: Rule-based verification, step verdicts, trace aggregation,
+% issue discarding, design rationale
+
+% Example table:
+% \begin{table}[htbp]
+%   \centering
+%   \caption{Trace verification rules and their verdicts.}
+%   \label{tab:verification-rules}
+%   \begin{tabularx}{\textwidth}{@{}l X c@{}}
+%     \toprule
+%     \textbf{Rule} & \textbf{Trigger Condition} & \textbf{Verdict} \\
+%     \midrule
+%     Loop detection & Identical (action, selector) repeated & INVALID \\
+%     % ... more rules
+%     \bottomrule
+%   \end{tabularx}
+% \end{table}
+
+
+% ---- 4.6 Issue Clustering ---------------------------------------------------
+\section{Issue Clustering}
+\label{sec:clustering}
+
+% TODO: Embedding, HDBSCAN, dynamic min_cluster_size, fallback, metadata
+
+% TODO: Add Fig 4.6 — Clustering pipeline
+
+
+% ---- 4.7 Recommender Agent and Patch Synthesis ------------------------------
+\section{Recommender Agent and Patch Synthesis}
+\label{sec:recommender}
+
+\subsection{RecommenderProfile Generation}
+\label{sec:recommender-profiles}
+
+% TODO: Profile fields, supervisor generation, fallback profiles
+
+\subsection{Patch Proposal}
+\label{sec:patch-proposal}
+
+% TODO: LLM call, prompt structure, response parsing
+
+\subsection{Patch Type Normalisation and Snippet Validation}
+\label{sec:patch-normalisation}
+
+% TODO: _PATCH_TYPE_ALIASES, _looks_like_html/css/js, CSS promotion,
+% JS recovery, DOMContentLoaded wrapping
+
+\subsection{Swarm Stigmergy}
+\label{sec:swarm-claims}
+
+% TODO: swarm_claims mechanism for cross-agent awareness
+
+
+% ---- 4.8 Conflict Detection and Resolution ----------------------------------
+\section{Conflict Detection and Resolution}
+\label{sec:conflict-resolution}
+
+\subsection{Conflict Detection}
+\label{sec:conflict-detection}
+
+% TODO: LLM-based detection with heuristic fallback
+
+\subsection{Negotiation Protocol}
+\label{sec:negotiation}
+
+% TODO: Multi-round negotiation: argument phase + mediation phase
+
+\subsection{Resolution Outcomes}
+\label{sec:resolution-outcomes}
+
+% TODO: chose_a, chose_b, merged, unresolved + confidence tiebreak
+
+% TODO: Add Fig 4.7 — Conflict resolution workflow
+
+
+% ---- 4.9 Patch Application -------------------------------------------------
+\section{Patch Application}
+\label{sec:patch-application}
+
+% TODO: Application order (HTML → CSS → JS → remove), replacement strategies,
+% CSS/JS injection, HTML validation
+
+
+% ---- 4.10 Verification Loop and Correction ----------------------------------
+\section{Verification Loop and Correction}
+\label{sec:verification-loop}
+
+% TODO: Per-persona verification, pass criteria, correction loop mechanism
+
+% TODO: Add Fig 4.8 — Patch application and verification loop
+
+
+% ---- 4.11 Report Generation -------------------------------------------------
+\section{Report Generation}
+\label{sec:report-generation}
+
+% TODO: Score calculation, JSON/Markdown/PDF output

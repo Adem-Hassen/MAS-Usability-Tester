@@ -1,0 +1,62 @@
+% ============================================================================
+% Chapter 5 — AI Agent Design
+% ============================================================================
+\chapter{AI Agent Design}
+\label{ch:ai-design}
+
+This chapter examines the \acr{LLM} integration layer as a first-class engineering concern: the agent roles, prompt architecture, cognitive reasoning pipeline, grounding mechanisms, model routing, and failure handling strategies that collectively ensure reliable, controllable agent behaviour.
+
+
+% ---- 5.1 Agent Roles and Prompt Architecture --------------------------------
+\section{Agent Roles and Prompt Architecture}
+\label{sec:agent-roles}
+
+% TODO: Table of agent roles with model assignments, temperatures, purposes
+% TODO: Explain system/user prompt separation pattern
+% TODO: JSON-only output constraint and unwrapping logic
+
+
+% ---- 5.2 Persona Reasoning and Cognitive Pipeline ---------------------------
+\section{Persona Reasoning and Cognitive Pipeline}
+\label{sec:cognitive-reasoning}
+
+% TODO: Detail the 6-phase pipeline rationale
+% TODO: Explain Plan/Decide decoupling as anti-hallucination measure
+% TODO: Add Fig 5.1 — Persona cognitive pipeline (6 phases)
+
+
+% ---- 5.3 Working Memory and Grounding Guards --------------------------------
+\section{Working Memory and Grounding Guards}
+\label{sec:grounding-guards}
+
+% TODO: WorkingMemory dataclass design
+% TODO: Python-only enforcement rationale
+% TODO: Five guard types with examples
+
+
+% ---- 5.4 Model Routing and Rate Limiting ------------------------------------
+\section{Model Routing and Rate Limiting}
+\label{sec:model-routing}
+
+% TODO: Per-role router singletons
+% TODO: Provider detection by model prefix
+% TODO: Per-key semaphore, JSON mode injection
+% TODO: Add Fig 5.2 — Model routing decision tree
+
+
+% ---- 5.5 Failure Handling and Fallback Strategies ---------------------------
+\section{Failure Handling and Fallback Strategies}
+\label{sec:failure-handling}
+
+% TODO: Enumerate all fallback paths (every LLM call has one)
+% TODO: Discuss "graceful degradation" principle
+
+
+% ---- 5.6 Prompt Design Patterns --------------------------------------------
+\section{Prompt Design Patterns}
+\label{sec:prompt-patterns}
+
+% TODO: Target enumeration (anti-hallucination)
+% TODO: Memory injection format
+% TODO: Compact formatting for token efficiency
+% TODO: JSON-only output constraint

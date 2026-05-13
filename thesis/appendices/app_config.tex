@@ -1,0 +1,34 @@
+% ============================================================================
+% Appendix A — Configuration Reference
+% ============================================================================
+\chapter{Configuration Reference}
+\label{app:config}
+
+This appendix documents the configurable parameters of the \versimux{} system as defined in \filepath{config/settings.py}.
+
+\begin{longtable}{@{}l l L{7cm}@{}}
+  \caption{System configuration parameters and their default values.}
+  \label{tab:config} \\
+  \toprule
+  \textbf{Parameter} & \textbf{Default} & \textbf{Description} \\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{Parameter} & \textbf{Default} & \textbf{Description} \\
+  \midrule
+  \endhead
+  \midrule
+  \multicolumn{3}{r}{\textit{Continued on next page}} \\
+  \endfoot
+  \bottomrule
+  \endlastfoot
+
+  % TODO: Fill from config/settings.py
+  \code{max\_personas}                      & 5     & Maximum number of persona agents per page evaluation. \\
+  \code{max\_steps}                         & 10    & Maximum interaction steps per persona simulation. \\
+  \code{max\_correction\_loops}              & 1     & Maximum verification-correction iterations. \\
+  \code{verification\_resolution\_threshold} & 0.8   & Minimum ratio of critical/high issues that must be resolved to pass verification. \\
+  \code{conflict\_max\_negotiation\_rounds}  & 2     & Maximum negotiation rounds per conflict. \\
+  % ... add more parameters
+
+\end{longtable}

@@ -1,0 +1,89 @@
+% ============================================================================
+% Chapter 2 — Background and Related Work
+% ============================================================================
+\chapter{Background and Related Work}
+\label{ch:background}
+
+This chapter situates \versimux{} within the broader landscape of automated usability evaluation, simulated user testing, multi-agent systems, and automated program repair. Each section reviews the state of the art, identifies limitations that motivate the design of \versimux{}, and positions the contributions of this thesis relative to existing work.
+
+
+% ---- 2.1 Automated Usability and Accessibility Evaluation --------------------
+\section{Automated Usability and Accessibility Evaluation}
+\label{sec:bg-accessibility}
+
+% TODO: Cover axe-core, Lighthouse, WAVE, Pa11y
+% Key argument: static rule checkers find structural violations but miss
+% context-dependent usability issues that require interaction
+
+% Example table:
+\begin{table}[htbp]
+  \centering
+  \caption{Comparison of existing automated accessibility evaluation tools.}
+  \label{tab:tool-comparison}
+  \begin{tabularx}{\textwidth}{@{}l L{2.5cm} L{2.5cm} C{1.8cm} C{1.8cm} C{1.8cm}@{}}
+    \toprule
+    \textbf{Tool} & \textbf{Method} & \textbf{Output Type} & \textbf{Multi-User Sim.} & \textbf{Code Patches} & \textbf{Verification} \\
+    \midrule
+    axe-core        & Static rule checking      & Violation list       & No  & No  & No  \\
+    Lighthouse      & Static + performance      & Audit report         & No  & No  & No  \\
+    WAVE            & Visual overlay            & Annotated page       & No  & No  & No  \\
+    Pa11y           & Automated rule runner     & Violation list       & No  & No  & No  \\
+    AccessLint      & CI/CD integration         & PR comments          & No  & No  & No  \\
+    \midrule
+    \versimux{}     & Simulated persona agents  & Patches + report     & Yes & Yes & Yes \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+
+% ---- 2.2 Simulated Users and Agentic Usability Testing ----------------------
+\section{Simulated Users and Agentic Usability Testing}
+\label{sec:bg-simulated-users}
+
+% TODO: Cover GOMS, CogTool, UXAgent, WebArena
+% Key argument: traditional cognitive models lack the flexibility of
+% LLM-based agents, but LLM-based agents require grounding to be reliable
+
+
+% ---- 2.3 Multi-Agent Systems for Software Engineering -----------------------
+\section{Multi-Agent Systems for Software Engineering}
+\label{sec:bg-mas}
+
+% TODO: Cover BDI architecture, swarm coordination, LangGraph, Generative Agents
+% Key argument: MAS provides the coordination framework for parallel
+% evaluation and remediation
+
+
+% ---- 2.4 LLM Grounding, Hallucination, and Trust ---------------------------
+\section{LLM Grounding, Hallucination, and Trust}
+\label{sec:bg-grounding}
+
+% TODO: Cover ReAct, tool-use agents, grounding in robotics, web agent grounding
+% Key argument: without explicit grounding, LLM-based agents generate
+% plausible but incorrect actions (hallucinated selectors, non-existent elements)
+
+
+% ---- 2.5 Automated Program Repair and Patch Synthesis -----------------------
+\section{Automated Program Repair and Patch Synthesis}
+\label{sec:bg-apr}
+
+% TODO: Cover GenProg, SemFix, LLM-based APR
+% Key argument: APR techniques for general software can be adapted for
+% UI-specific patches (HTML/CSS/JS) with domain-specific typing
+
+
+% ---- 2.6 Developer-Facing Accessibility Tooling -----------------------------
+\section{Developer-Facing Accessibility Tooling}
+\label{sec:bg-dev-tools}
+
+% TODO: Cover GitHub Copilot for a11y, Deque tools, AccessLint
+% Key argument: existing tools suggest what to fix but do not provide
+% executable code changes — VerSimUX fills this gap
+
+
+% ---- 2.7 Summary and Research Gap -------------------------------------------
+\section{Summary and Research Gap}
+\label{sec:bg-gap}
+
+% TODO: Synthesise the gaps identified across all sections into a clear
+% research gap statement that motivates VerSimUX's design

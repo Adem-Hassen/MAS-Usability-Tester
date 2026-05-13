@@ -1,0 +1,62 @@
+% ============================================================================
+% VerSimUX — Master's Thesis
+% Main Document
+% ============================================================================
+\documentclass[12pt, a4paper, oneside]{report}
+
+% Load all packages and custom commands
+\input{preamble}
+
+% ---- Bibliography source ---------------------------------------------------
+\addbibresource{references.bib}
+
+% ---- Document metadata ------------------------------------------------------
+\title{VerSimUX: A Grounded Multi-Agent Architecture for Automated Usability Evaluation and Code-Level Remediation of Web Interfaces}
+\author{[Your Full Name]}
+\date{\today}
+
+% ---- Custom metadata commands -----------------------------------------------
+\newcommand{\thesisUniversity}{[University Name]}
+\newcommand{\thesisFaculty}{[Faculty / Department Name]}
+\newcommand{\thesisProgramme}{[Master's Programme Name]}
+\newcommand{\thesisSupervisor}{[Supervisor Name]}
+\newcommand{\thesisDate}{[Month Year]}
+
+% =============================================================================
+\begin{document}
+
+% ---- Front matter (roman page numbers) --------------------------------------
+\input{frontmatter/titlepage}
+
+\clearpage
+\input{frontmatter/declaration}
+\input{frontmatter/abstract}
+\input{frontmatter/acknowledgments}
+
+\tableofcontents
+\listoffigures
+\listoftables
+% \lstlistoflistings  % Uncomment when you have code listings
+
+% ---- Main matter (arabic page numbers) --------------------------------------
+\mainmatter
+\input{chapters/ch01_introduction}
+\input{chapters/ch02_background}
+\input{chapters/ch03_overview}
+\input{chapters/ch04_architecture}
+\input{chapters/ch05_ai_design}
+\input{chapters/ch06_infrastructure}
+\input{chapters/ch07_evaluation}
+\input{chapters/ch08_discussion}
+\input{chapters/ch09_conclusion}
+
+% ---- Back matter -------------------------------------------------------------
+\printbibliography[heading=bibintoc, title={References}]
+
+\appendix
+\input{appendices/app_config}
+\input{appendices/app_prompts}
+\input{appendices/app_schemas}
+\input{appendices/app_examples}
+
+\end{document}
