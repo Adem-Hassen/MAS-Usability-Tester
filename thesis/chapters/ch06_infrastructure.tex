@@ -11,42 +11,153 @@ This chapter describes the runtime infrastructure that makes \versimux{} operati
 \section{Event Bus and Logging Bridge}
 \label{sec:event-bus}
 
-% TODO: EventBus singleton, pub/sub pattern
-% TODO: structlog _event_bus_processor for transparent event capture
-% TODO: Thread-safe event delivery
+At the core of \versimux{}'s runtime telemetry is the \code{EventBus} class, implemented as a thread-safe singleton. Because the multi-agent execution pipeline runs concurrently across multiple system threads managed by a \code{ThreadPoolExecutor}, the telemetry subsystem must support concurrent event registration and emission without causing database lockups or racing states. 
+
+The \code{EventBus} handles this via a thread lock guard (\code{_lock = threading.Lock()}) that wraps instance acquisition. Telemetry consumers subscribe to the event stream by registering callbacks with the bus:
+
+\begin{lstlisting}[language=Python, caption={Thread-Safe EventBus Implementation (core/event\_bus.py).}]
+import threading
+from typing import Callable, Optional
+
+class EventBus:
+    _instance: Optional["EventBus"] = None
+    _lock = threading.Lock()
+    
+    def __init__(self):
+        self._handlers: list[Callable] = []
+    
+    @classmethod
+    def get(cls) -> "EventBus":
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
+    
+    def subscribe(self, handler: Callable[[str, dict], None]):
+        self._handlers.append(handler)
+    
+    def emit(self, event_type: str, **payload):
+        for handler in self._handlers:
+            try:
+                handler(event_type, payload)
+            except Exception:
+                pass
+\end{lstlisting}
+
+To bridge standard logging output with the streaming telemetry interface, the backend configures a logging bridge processor. When structured log events are emitted by the agents (using the \code{structlog} library), they are intercepted by a custom processor. This processor checks the log messages for specific pipeline keys (e.g., \code{graph.supervisor_node.start}, \code{page_pipeline.start}, \code{persona.action}) and maps them directly to frontend step IDs and progress percentages. This architecture enables developers to view log lines and structured progress updates simultaneously.
 
 
 % ---- 6.2 Server-Sent Events Streaming and State Recovery --------------------
 \section{Server-Sent Events Streaming and State Recovery}
 \label{sec:sse-streaming}
 
-% TODO: stream_evaluate endpoint
-% TODO: Last-Event-ID reconnection protocol
-% TODO: Event replay from SQLite
-% TODO: Keepalive mechanism
+To feed the dashboard's real-time visual progress tracker, the backend exposes a \acr{SSE} stream via the `/api/v1/evaluate/{job_id}/stream` endpoint. Unlike traditional short-polling or WebSocket connections, SSE offers a unidirectional, low-overhead HTTP streaming channel that fits the event-driven progress logging model of the evaluation pipeline.
+
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{7.2cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 6.1: Event Streaming and Telemetry Infrastructure]\\ \vspace{1.2em} \normalsize\normalfont Traces the flow of telemetry events: from multi-threaded agent nodes emitting structured logs, to the singleton \code{EventBus}, which simultaneously persists events to SQLite and dispatches them via \code{loop.call_soon_threadsafe()} to FastAPI's async subscriber queues. These queues stream the events to the Next.js frontend over an HTTP SSE connection.}}
+  \caption{Telemetry event streaming and pub/sub architecture layout.}
+  \label{fig:telemetry-infrastructure}
+\end{figure}
+
+\subsection{Last-Event-ID Reconnection Protocol}
+\label{sec:reconnection-protocol}
+
+A primary challenge in streaming telemetry over long-running jobs is connection instability. If the client experiences a transient network drop, it will reconnect, but any events emitted during the downtime are lost, resulting in an desynchronised frontend state. 
+
+\versimux{} resolves this by implementing the standard `Last-Event-ID` reconnection protocol. Each event emitted by the server is prefixed with an auto-incrementing integer ID. When a disconnected client re-establishes its connection, it sends its last successfully processed ID via the `Last-Event-ID` HTTP header. 
+
+Upon receiving this header, the server queries the SQLite database to fetch and replay all buffered events whose IDs are greater than the client's last received ID, before seamlessly subscribing the client back to the active queue.
+
+\subsection{Keepalive Heartbeat Mechanism}
+\label{sec:keepalive}
+
+To prevent intermediary proxies, firewalls, and reverse proxies (e.g., Nginx) from dropping idle connections during quiet periods of agent reasoning, the server implements a keep-alive heartbeat. If no telemetry events are pushed to the client's active queue for 15 seconds, the generator yields an empty comment string (\code{": keepalive\textbackslash{}n\textbackslash{}n"}), maintaining the connection without impacting the client's event handlers.
 
 
 % ---- 6.3 Session Store and Persistence --------------------------------------
 \section{Session Store and Persistence}
 \label{sec:session-store}
 
-% TODO: SQLite schema (sessions, events tables)
-% TODO: Async queue broadcasting via loop.call_soon_threadsafe()
-% TODO: Task tracking and cancellation
+The \code{SessionStore} class manages local persistence and coordination. It relies on a local SQLite database configured in Write-Ahead Logging (WAL) mode to permit concurrent read and write transactions.
+
+\subsection{Database Schema}
+\label{sec:db-schema}
+
+The persistence model consists of two primary tables:
+\begin{itemize}
+    \item \textbf{\code{sessions}:} Tracks metadata for each execution session, including the primary ID, status (ready, running, done, failed), overall progress percentage, file counts, output paths, and the final results payload.
+    \item \textbf{\code{events}:} Stores the complete sequential history of telemetry events. Each record tracks the global event ID, session ID, event kind, ISO timestamp, and a JSON payload containing details (e.g., action coordinates, screenshot references, or issues).
+\end{itemize}
+
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{6.8cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 6.2: Last-Event-ID State Recovery Flow]\\ \vspace{1.2em} \normalsize\normalfont Sequence diagram illustrating a client disconnecting during a run. The client reconnects sending `Last-Event-ID: 15`. The server queries the SQLite event table for events with ID > 15, streams them to catch up the client state, and then routes new live events to the client's queue.}}
+  \caption{Reconnection sequence and state catch-up flow using Last-Event-ID.}
+  \label{fig:reconnection-flow}
+\end{figure}
+
+\subsection{Thread-Safe Event Dispatching}
+\label{sec:thread-safe-dispatching}
+
+Because database writes are triggered by background threads running the LangGraph agent pipeline, direct calls to asynchronous event queues would cause thread conflicts. To bridge this boundary, the \code{SessionStore} captures the main asyncio event loop reference during initialization (\code{self._loop = asyncio.get_running_loop()}). 
+
+When an agent thread calls \code{store.emit()}, the store writes the event to the SQLite database and dispatches it to the active async queues using the thread-safe API:
+
+\begin{code}
+loop.call_soon_threadsafe(q.put_nowait, event)
+\end{code}
+
+This ensures that the web server remains responsive while agents execute tasks concurrently.
+
+\subsection{Active Task Registry and Cancellation}
+\label{sec:task-registry}
+
+The store maintains an active task registry (\code{self._active_tasks}) mapping active session IDs to their running \code{asyncio.Task} handlers. If a user requests job cancellation (via the `/api/v1/evaluate/{job_id}/cancel` endpoint), the server looks up the task, invokes \code{task.cancel()}, and executes cleanup routines, including shutting down any remaining Playwright Chromium instances.
 
 
 % ---- 6.4 Pipeline Runner ----------------------------------------------------
 \section{Pipeline Runner}
 \label{sec:pipeline-runner}
 
-% TODO: Event mapping (_STEP_MAP, _FUNC_STEP_MAP)
-% TODO: Heartbeat thread
-% TODO: Screenshot handling (base64 → JPEG → URL)
+The \code{pipeline_runner.py} script coordinates the transition from FastAPI endpoint requests to active LangGraph execution. It wraps the execution within \code{asyncio.to_thread} to keep the main event loop unblocked.
+
+\subsection{Telemetry Mapping and Progress Tracking}
+\label{sec:telemetry-mapping}
+
+The runner contains two configuration structures, \code{_STEP_MAP} and \code{_FUNC_STEP_MAP}, that map internal system events and python module executions to high-level UI progress indicators (e.g., mapping `clustering_node` to a 30\% progress indicator with the text "Clustering issues..."). 
+
+A background heartbeat thread runs in parallel to monitor the pipeline's progress. If no log events are generated for 20 seconds, the thread emits a heartbeat progress indicator to prevent the frontend from timing out or entering an idle state.
+
+\subsection{Screenshot Optimisation and Management}
+\label{sec:screenshot-optimisation}
+
+During simulation, the Playwright browser context captures screenshots of each step in base64 format. Passing these raw base64 strings directly through the SSE stream would cause significant token bloat and consume network bandwidth. 
+
+To prevent this, the pipeline runner intercepts these images, decodes them, writes them to disk as compressed JPEGs under the session's output directory, and replaces the base64 payload with a relative asset URL (e.g., \code{/api/v1/evaluate/{job_id}/screenshots/{filename}}). These images are served by the backend's static file routing.
 
 
 % ---- 6.5 Frontend Integration -----------------------------------------------
 \section{Frontend Integration}
 \label{sec:frontend}
 
-% NOTE: Keep this brief (2-3 paragraphs). The thesis focuses on the backend.
-% TODO: PipelineContext, applyEvent reducer, streamEvaluate with backoff
+The frontend is implemented in Next.js as a dashboard that coordinates state using React context (\code{PipelineContext}). The dashboard relies on a pure state reducer (\code{applyEvent}) to handle incoming SSE telemetries and update the UI:
+
+\begin{code}
+function applyEvent(prev: PipelineState, ev: StreamEvent): PipelineState {
+  const next = { ...prev };
+  switch (ev.kind) {
+    case 'pipeline_start':
+      next.status = 'running';
+      next.progress = 2;
+      break;
+    case 'persona_action':
+      next.livePreviews[ev.persona_id] = { ... };
+      break;
+    ...
+  }
+  return next;
+}
+\end{code}
+
+This architecture ensures that the frontend remains decoupled from the backend's internal structures. The client consumes a single stream of events, applying changes incrementally. If the connection fails, the client uses an exponential backoff retry strategy to reconnect, sending its last received event ID to resume the stream without losing progress data.

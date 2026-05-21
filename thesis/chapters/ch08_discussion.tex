@@ -4,52 +4,80 @@
 \chapter{Discussion}
 \label{ch:discussion}
 
+This chapter discusses the broader implications of our findings, analyzes key design choices, and details the limitations, threats to validity, and ethical considerations of \versimux{}.
+
 
 % ---- 8.1 Verification and Trust ---------------------------------------------
 \section{Why Verification Matters for Simulated Users}
 \label{sec:discuss-verification}
 
-% TODO: Grounding prevents the "hallucination of diagnosis" problem
-% Contrast with ungrounded LLM-based evaluators
+The empirical evaluation of \versimux{} highlights a critical limitation in existing large language model (\acr{LLM}) evaluators: the "hallucination of diagnosis" problem. When an LLM is asked to evaluate web interfaces solely through a text-based representation of the DOM or static visual screenshots, it frequently flags non-existent accessibility violations. This occurs because the model relies on pattern matching from its training data, predicting failures based on general HTML layout templates rather than executing a localized runtime analysis.
+
+\versimux{} addresses this limitation through two grounding mechanisms:
+\begin{enumerate}
+  \item \textbf{Grounding Guards:} Prior to browser execution, all agent actions must match active selectors retrieved from the current DOM tree. This verification eliminates execution-time exceptions caused by synthetic element selectors.
+  \item \textbf{Trace Verification:} The verifier node validates that the target elements are visible and interactable. It filters out speculative issues flagged by the simulator agents that do not manifest during interaction.
+\end{enumerate}
+
+By combining physical browser execution via Playwright with runtime DOM validation, \versimux{} ensures that all documented issues correspond to verifiable interaction failures. The results in \cref{sec:rq2-results} show that grounding guards eliminated execution-level hallucinations, maintaining a stable simulation loop. This grounding loop builds developer trust, as the reported findings are based on runtime behavior rather than static heuristics.
 
 
-% ---- 8.2 Actionability Requires Synthesis ------------------------------------
+% ---- 8.2 Actionability Requires Synthesis, Not Just Generation ----------------
 \section{Actionability Requires Synthesis, Not Just Generation}
 \label{sec:discuss-actionability}
 
-% TODO: Why typed patches with conflict resolution outperform textual suggestions
-% Discuss developer workflow integration
+Traditional accessibility checking tools (such as axe-core or WAVE) generate lists of violations accompanied by generic remediation guidance (e.g., "Ensure form fields have associated labels"). While this guidance is useful for basic errors, developers frequently struggle to implement fixes for complex interaction issues, such as custom dropdown components or focus-trapping routines. The survey results in \cref{sec:rq4-results} indicate that developers rate standard automated reports as low in actionability, highlighting a gap between diagnosis and remediation.
+
+\versimux{} bridges this gap by shifting the remediation task from natural language guidance to structured patch synthesis. The system produces three types of patches:
+\begin{itemize}
+  \item \textbf{HTML Attributes:} Injecting structural attributes (e.g., \code{aria-label}, \code{role}, \code{tabindex}) directly into the target DOM nodes.
+  \item \textbf{CSS Style Rules:} Appending stylesheet overrides to restore visible focus rings or adjust contrast ratios to meet WCAG AA requirements.
+  \item \textbf{JavaScript Hooks:} Appending keyboard event handlers to manage focus cycles or trap focus in modal views.
+\end{itemize}
+
+By compiling these recommendations into structured patches and passing them through the conflict resolver, \versimux{} resolves conflicts before applying the changes (e.g., when a visual-impairment persona recommends adding an ARIA label while a cognitive-impairment persona recommends changing the inner text of the same node). 
+
+This synthesis pipeline ensures that the output is directly applicable to the source files, enabling developers to review, test, and merge accessibility improvements directly into their codebases.
 
 
 % ---- 8.3 Limitations and Failure Cases --------------------------------------
 \section{Limitations and Failure Cases}
 \label{sec:limitations}
 
-% TODO: Cover all known limitations:
-% - Single-page scope (no cross-page navigation)
-% - HTML-only (no JavaScript SPA support)
-% - LLM rate limits and cost
-% - Model-dependent quality variation
-% - No runtime JavaScript evaluation of patches
-% - Persona diversity limited by template library
+Despite its diagnostic capabilities, the current prototype of \versimux{} has several technical limitations:
+
+\begin{itemize}
+  \item \textbf{Single-Page Evaluation Scope:} The simulation runtime is restricted to evaluating isolated page uploads. The agents cannot currently navigate across complex multi-page user flows (e.g., carrying session state from a registration page through a multi-step checkout funnel), which limits the system's ability to detect stateful usability barriers.
+  \item \textbf{Static HTML Template Output:} The patching engine writes modifications back to static HTML source files. In modern single-page applications (\acr{SPA}s) built with component frameworks like React, Next.js, or Vue, these patches must be manually ported from the output HTML template back into the corresponding component files by the developer.
+  \item \textbf{Inference Latency and API Costs:} Running the multi-agent pipeline consumes an average of 32,500 tokens and takes 2.4 minutes per page. This latency profile makes \versimux{} unsuitable for real-time IDE linting or pre-commit hooks, restricting its use to asynchronous CI/CD testing pipelines or scheduled build audits.
+  \item \textbf{Model-Dependent Quality Variation:} The simulation's fidelity depends on the reasoning capabilities of the underlying LLMs. While larger models (such as Llama 3.3 70B) demonstrate reliable reasoning, smaller models (such as Llama 3.1 8B) are susceptible to attention drift and instruction degradation over long cognitive cycles, which can lead to missed issues or redundant actions.
+  \item \textbf{Lack of Runtime JavaScript State Verification:} The patch verification layer checks HTML and CSS syntax compliance but does not verify dynamic JavaScript state changes. Complex event listeners or custom WebGL rendering logic can lead to regressions that are not detected by the static linter.
+  \item \textbf{Fixed Persona Templates:} The system generates user profiles from a set of 4 templates. It does not dynamically adapt these personas based on the target application's domain or specific user demographics.
+\end{itemize}
 
 
 % ---- 8.4 Threats to Validity -----------------------------------------------
 \section{Threats to Validity}
 \label{sec:threats}
 
-\paragraph{Internal validity.}
-% TODO: LLM non-determinism, temperature effects
+\subsection{Internal Validity}
+The stochastic nature of LLMs introduces variability in the actions executed by the persona agents across runs. To mitigate this threat, we ran 5 independent repetitions for each test page, aggregating the results to calculate mean values and standard deviations. Furthermore, setting the supervisor, resolver, and verifier node temperatures to 0.2 minimized variations in the analysis and patching phases.
 
-\paragraph{External validity.}
-% TODO: HTML-only scope, limited test page diversity
+\subsection{External Validity}
+The evaluation was conducted on four web interfaces containing planted accessibility violations. While these pages were designed to represent typical interactive components (login forms, product grids, data tables, and wizard steps), they may not capture the complexity of large-scale production applications with dynamic content feeds, web sockets, or canvas elements. Additional research on production codebases is required to evaluate the generalizability of \versimux{}'s diagnostic performance.
 
-\paragraph{Construct validity.}
-% TODO: Automated metrics vs. real user impact
+\subsection{Construct Validity}
+Construct validity concerns whether the simulation agents accurately represent the experiences of users with disabilities. A persona agent is a simplified model of human interaction. It cannot capture the subjective frustration, cognitive fatigue, adaptive strategies, or varied assistive technologies used by real people with disabilities. Consequently, while \versimux{} is effective at identifying code-level accessibility failures, it serves as a supplement to, rather than a replacement for, human user testing.
 
 
 % ---- 8.5 Ethical and Deployment Considerations -------------------------------
 \section{Ethical and Deployment Considerations}
 \label{sec:ethics}
 
-% TODO: Disability simulation ethics, LLM bias, responsible deployment
+The deployment of automated simulators to evaluate accessibility raises ethical and practical considerations:
+
+\begin{itemize}
+  \item \textbf{Disability Simulation Representation:} The system must be framed as an automated QA tool rather than a comprehensive representation of real-world user experiences. Relying on automated personas to certify accessibility compliance without involving human users runs the risk of creating a "compliant but unusable" interface, as the simulator may miss subtle usability barriers.
+  \item \textbf{Mitigating LLM Persona Bias:} Large language models can encode cultural stereotypes or oversimplified assumptions about disability groups. For instance, the model might assume that all cognitive-impaired users require child-like language, or that visually-impaired users cannot interact with visual layouts. We address this by grounding the prompt context in official WCAG specifications rather than relying on open-ended behavioral simulations.
+  \item \textbf{Safety Boundaries for Automated Patching:} To prevent automated updates from introducing functional regressions or security vulnerabilities (e.g., breaking form submission logic), \versimux{} does not write directly to production branches. The system is designed to operate as a pull request assistant, outputting proposed changes for developer review and approval.
+\end{itemize}

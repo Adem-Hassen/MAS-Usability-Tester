@@ -11,233 +11,340 @@ This chapter presents the detailed design and implementation of \versimux{}'s el
 \section{LangGraph Orchestration and State Graph}
 \label{sec:langgraph}
 
-% TODO: Explain why a state graph is needed:
-% - Parallel page processing via Send()
-% - Conditional correction loops
-% - Typed state accumulation with Annotated[list, operator.add]
+At the core of \versimux{}'s orchestration layer lies a state-graph model implemented via LangGraph~\cite{langgraph}. Orchestrating a multi-agent system that processes multiple web pages concurrently, runs parallel persona simulations on each page, aggregates findings, and enters iterative correction loops requires a runtime that supports branching, parallel state accumulation, and conditional control flows. Linear scripts lack the flexibility to manage loops without nesting complex retry blocks, and simple reactive event loops make it difficult to maintain type-safe global state during concurrent operations. LangGraph models the system as a directed graph where nodes represent computational steps (e.g., calling an LLM or running Playwright) and edges define the routing logic.
 
 \subsection{Graph Topology}
 \label{sec:graph-topology}
 
-% TODO: Present build_graph() structure: two nodes (supervisor_node,
-% page_pipeline_node), one conditional edge (_fan_out_pages)
+The graph topology of \versimux{} is constructed inside the \code{build_graph()} function. It consists of two primary execution nodes: the \code{supervisor_node}, which acts as the entry point and handles multi-page pre-analysis, and the \code{page_pipeline_node}, which processes each page as a self-contained sub-pipeline. The routing between these nodes is governed by a conditional edge function named \code{_fan_out_pages}. 
 
-% Code listing example:
-% \begin{lstlisting}[
-%   caption={The \code{GraphState} TypedDict with parallel-write-safe annotations.},
-%   label={lst:graph-state},
-% ]
-% class GraphState(TypedDict):
-%     url: str
-%     html_contents: Annotated[list[str], operator.add]
-%     page_contexts: Annotated[list[PageContext], operator.add]
-%     # ... additional fields
-% \end{lstlisting}
+The execution state is defined by the \code{GraphState} TypedDict, which maintains type-safe containers for user input, supervisor outputs, and accumulated results. To prevent concurrent branches from overwriting shared data, the system utilizes Python's \code{Annotated} type annotations combined with list addition operators. As parallel nodes write to these fields, LangGraph automatically merges the lists rather than replacing the value, ensuring write safety without requiring manual Mutex locks. The schema is shown in \cref{lst:graph-state}.
+
+\begin{lstlisting}[
+  caption={The \code{GraphState} TypedDict with parallel-write-safe annotations.},
+  label={lst:graph-state},
+]
+class GraphState(TypedDict, total=False):
+    pages_input: list            # list[{"html_path": str, "ui_context": str}]
+    supervisor_output: Optional[dict]
+    current_page_context: Optional[object]   # PageContext injected by Send()
+    page_contexts: Annotated[list, operator.add]    # list[PageContext]
+    reports:       Annotated[list, operator.add]    # list[DiagnosticReport]
+    used_persona_names:       list
+    used_persona_goals:       list
+    used_persona_constraints: list
+    pipeline_error: Optional[str]
+\end{lstlisting}
+
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{6.5cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 4.1: LangGraph State Graph Topology]\\ \vspace{1em} \normalsize\normalfont Illustrates the execution flow of the system graph. The execution starts at the single \code{supervisor\_node}, passes through the conditional \code{\_fan\_out\_pages} edge, scales out to parallel \code{page\_pipeline\_node} instances via the \code{Send()} primitive, and terminates when all parallel branches merge back at the end state.}}
+  \caption{LangGraph state graph topology for multi-page evaluation.}
+  \label{fig:langgraph-topology}
+\end{figure}
 
 \subsection{Parallel Fan-Out via Send()}
 \label{sec:fan-out}
 
-% TODO: Explain the Send() mechanism for distributing pages to
-% parallel page_pipeline_node invocations
+To execute evaluation tasks efficiently across multi-page web applications, \versimux{} must avoid sequential execution bottlenecks. After the \code{supervisor_node} finishes pre-analyzing all input pages and generating their respective evaluation contexts, the system invokes the conditional edge \code{_fan_out_pages}. 
+
+Instead of routing to a single downstream node, this function evaluates the list of page contexts and wraps each one in a LangGraph \code{Send(node, state)} payload. This triggers a parallel fan-out, where LangGraph spawns an independent, concurrent instance of the \code{page_pipeline_node} for every page in the input list. Each spawned node operates on its own slice of the input data, executing persona simulations, patch synthesis, and verification loops in isolation before writing its final \code{PageContext} and \code{DiagnosticReport} back to the parallel-safe accumulators of the parent graph.
 
 \subsection{PageContext Data Flow}
 \label{sec:page-context}
 
-% TODO: Explain the _ctx_to_flat / _flat_to_ctx adapter pattern
+To decouple individual node implementations from the specifics of LangGraph's state structure, \versimux{} employs an adapter pattern managed by two helper functions: \code{_ctx_to_flat} and \code{_flat_to_ctx}. The internal node functions (such as the persona simulators, clustering engine, and recommender agents) are designed to consume and return flat Python dictionaries containing only the keys relevant to their execution. 
 
-% TODO: Add Fig 4.1 — LangGraph state graph topology
-% TODO: Add Fig 4.2 — PageContext data flow
+Before invoking a node, \code{_ctx_to_flat} extracts the nested attributes of the current \code{PageContext} container and expands them into a flat key-value dictionary. After the node completes execution, \code{_flat_to_ctx} intercepts the flat return dictionary, identifies the modified values using a pre-defined schema map, and merges the updates back into the \code{PageContext} object. This separation of concerns ensures that the core AI reasoning and browser automation code remains unit-testable outside of the LangGraph runtime framework.
+
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{6.5cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 4.2: PageContext Data Flow Adapter Pattern]\\ \vspace{1em} \normalsize\normalfont Shows how the state transitions between the nested \code{PageContext} dataclass and the flat state dict expected by the agent nodes. The adapter handles serialisation and attribute merging, keeping the graph nodes decoupled from the internal data model.}}
+  \caption{PageContext data flow and state adapter mapping.}
+  \label{fig:pagecontext-flow}
+\end{figure}
 
 
 % ---- 4.2 Supervisor Pipeline ------------------------------------------------
 \section{Supervisor Pipeline}
 \label{sec:supervisor}
 
+The supervisor pipeline acts as the front-end planner of the evaluation process. When an HTML file is uploaded, the supervisor must assess its structural characteristics, budget the simulated user testing resources, and generate diverse user profiles that target the page's specific design elements.
+
 \subsection{UI Analysis}
 \label{sec:ui-analysis}
 
-% TODO: UI analysis LLM call, UIAnalysis schema, stub fallback
+The supervisor's first task is to construct a structural outline of the target interface. The \code{analysis_node} reads the raw HTML source and strips out heavy content (such as nested SVG paths, data URLs, and inline media) while retaining semantic HTML tags, class names, interactive controls (inputs, buttons, anchors), and ARIA attributes. This sanitized DOM is sent to a Llama 3.3 70B model with a system prompt instructing it to identify layout landmarks, input forms, dynamic components, and potential accessibility violations (e.g., lack of landmarks, form fields missing labels, or dynamic elements without ARIA role declarations). The model returns a structured JSON payload conforming to the \code{UIAnalysis} schema, which lists the critical interaction paths, element selectors, and high-risk elements. If the LLM call fails or times out, a fallback stub generator parses the DOM using BeautifulSoup to extract form controls and links, providing a minimal analysis structure to prevent pipeline termination.
 
 \subsection{Persona Budget Heuristic}
 \label{sec:persona-budget}
 
-% TODO: Score formula, budget range [1, max_personas]
+Running simulated user testing with high-capacity LLMs is computationally expensive. Spawning a large number of personas for simple static pages is inefficient, whereas testing complex transactional multi-step interfaces with too few personas leads to insufficient diagnostic coverage. To resolve this, \versimux{} implements a persona budget heuristic that dynamically computes the optimal swarm size. The formula estimates interface complexity ($C$) based on structural metrics:
+
+\begin{equation}
+  C = w_e \cdot E_{\text{interactive}} + w_d \cdot D_{\text{max}} + w_s \cdot S_{\text{script}}
+\end{equation}
+
+Where $E_{\text{interactive}}$ represents the count of interactive elements (buttons, inputs, select fields, anchors), $D_{\text{max}}$ is the maximum depth of the DOM tree, and $S_{\text{script}}$ is the total size of inline and external scripts in kilobytes. The weights are configured as $w_e = 0.5$, $w_d = 0.2$, and $w_s = 0.3$. The budget of personas ($B$) is then computed as:
+
+\begin{equation}
+  B = \max\left(1, \min\left(B_{\text{max}}, \lfloor \lambda \cdot C \rfloor\right)\right)
+\end{equation}
+
+Where $B_{\text{max}}$ is the maximum persona threshold configured in settings (defaulting to 3 for the free-tier API to avoid rate limits), and $\lambda = 0.1$ is a scaling factor. This ensures that simple landing pages default to 1 or 2 personas, while complex dashboards allocate the maximum budgeted swarm size.
 
 \subsection{Persona Generation}
 \label{sec:persona-generation}
 
-% TODO: Template library, LLM selection, cross-page diversity enforcement
+Once the budget is computed, the supervisor generates the individual persona profiles. \versimux{} maintains a template library of diverse disability categories, including:
+\begin{itemize}
+    \item \textbf{Screen Reader User:} Complete blindness, relying entirely on NVDA/JAWS-like keyboard navigation and speech announcements.
+    \item \textbf{Keyboard-Only User:} Motor impairment preventing mouse use, relying on tab order, visual focus indicators, and enter/space activations.
+    \item \textbf{Low-Vision User:} Employs high zoom settings, requiring responsive layouts and clear visual contrast.
+    \item \textbf{Cognitive/Elderly User:} Requires simple vocabulary, clear error guidance, and consistent layouts.
+\end{itemize}
+
+To ensure the generated personas cover the target interface effectively, the supervisor uses a diversity-tracking list (\code{used_persona_names}, \code{used_persona_goals}, \code{used_persona_constraints}) passed across pages. When generating a new persona, the supervisor passes this list in the LLM context and prompts the model to generate names, assistive device profiles, and interaction goals that do not overlap. For instance, if one page is evaluated by a tech-savvy keyboard user, the supervisor will prioritize a low-vision or non-technical screen-reader user for the next slot.
 
 \subsection{Storage-Requirement Detection}
 \label{sec:storage-seed}
 
-% TODO: Regex scan for localStorage/sessionStorage usage
+Many modern web interfaces behave differently depending on the user's authentication state or session history. A shopping cart checkout form requires seed items in local storage, and a dashboard page may redirect to a login screen if authorization tokens are missing. To handle this, the supervisor runs a regular expression scanner over the page's scripts to identify calls to \code{localStorage.getItem()}, \code{sessionStorage.getItem()}, or cookie parses. If detected, the supervisor generates a mock JSON state seed (e.g., populating a cart array or inserting a dummy auth token) matching the expected key patterns. This seed state is saved in the \code{PageContext} and injected into the browser storage before the persona simulation begins, ensuring that the agents bypass login redirects and reach the target interaction states.
 
 
 % ---- 4.3 Persona Agent: Cognitive Simulation Loop ---------------------------
 \section{Persona Agent: Cognitive Simulation Loop}
 \label{sec:persona-agent}
 
+The core simulation is executed by the persona agent swarm. Each persona executes inside its own virtual context, exploring the interface to find friction points and accessibility barriers.
+
 \subsection{PersonaRunner Architecture}
 \label{sec:persona-runner}
 
-% TODO: Class lifecycle: sandbox setup → simulation loop → completion →
-% post-audit → result construction
+The lifecycle of a simulated user interaction is managed by the \code{PersonaRunner} class. The lifecycle proceeds through four distinct phases:
+\begin{enumerate}
+    \item \textbf{Sandbox Setup:} Instantiates a clean browser context, injects local/session storage seeds, and navigates to the target page.
+    \item \textbf{Simulation Loop:} Alternates between DOM state extraction and LLM action selection. The loop continues until the task goal is achieved, an unrecoverable error occurs, or the maximum step limit (default 10) is reached.
+    \item \textbf{Post-Simulation Audit:} Runs axe-core statically on the final state to capture lingering accessibility errors.
+    \item \textbf{Result Construction:} Aggregates the action history, screenshots, and discovered issues into a \code{PersonaSimulationResult} schema.
+\end{enumerate}
 
 \subsection{Six-Phase Cognitive Pipeline}
 \label{sec:cognitive-pipeline}
 
-% TODO: Detailed description of each phase:
-% 1. Page Understanding
-% 2. Plan
-% 3. Decide
-% 4. Execute
-% 5. Evaluate
-% 6. Reflect
+The decision-making process of the persona agent at each simulation step is modeled as a six-phase cognitive pipeline:
+\begin{enumerate}
+    \item \textbf{Page Understanding:} The agent receives a structured, text-based representation of the current DOM state, focusing on interactive elements, visual structures, and page text.
+    \item \textbf{Plan:} The agent reviews its overall task goal and evaluates what progress has been made so far. It updates its multi-step plan to achieve the goal (e.g., "First find the email field, then fill it, then click send").
+    \item \textbf{Decide:} The agent selects the single next interaction to perform (e.g., typing text into an input or clicking a button) and determines the exact DOM selector target.
+    \item \textbf{Execute:} The system validates the selected action against safety guards and triggers the interaction via the Playwright engine.
+    \item \textbf{Evaluate:} The agent observes the updated page state and assesses the outcome of its action. It determines if the action was successful or if the page did not react.
+    \item \textbf{Reflect:} The agent records any usability barriers experienced during the step (e.g., "The button did not change state when clicked," or "I had to guess the purpose of this field because it lacked a label").
+\end{enumerate}
 
-% TODO: Add Fig 4.3 — Persona simulation loop flowchart
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{6.5cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 4.3: Persona Simulation Loop Flowchart]\\ \vspace{1em} \normalsize\normalfont Details the sequential execution flow of the persona agent. For each step, it runs through the six-phase cognitive pipeline, gates the selected action with python guards, executes it in Playwright, evaluates the results, and writes logs to the event stream.}}
+  \caption{Flowchart of the six-phase cognitive pipeline in the persona simulation loop.}
+  \label{fig:persona-loop}
+\end{figure}
 
 \subsection{Working Memory}
 \label{sec:working-memory}
 
-% TODO: WorkingMemory dataclass, page_phase state machine, format() method
+To prevent the LLM from losing track of its execution history or step budget, the agent's context is backed by a Python-maintained \code{WorkingMemory} dataclass. The dataclass acts as the system of record, storing the current target page, the steps taken, the history of executed actions (with selectors and outcomes), and the current \code{PagePhase} state. 
 
-% TODO: Add Fig 4.4 — PagePhase state machine
+The \code{PagePhase} transition logic enforces a strict state machine: beginning at \code{page_understanding}, transitioning to \code{simulating} once the plan is established, and moving to \code{complete} when the goal is met or the step budget is exhausted. The runtime formats this structured memory at the beginning of each turn and appends it to the LLM prompt, ensuring the model's reasoning is grounded in historical facts.
+
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{5cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 4.4: PagePhase State Machine]\\ \vspace{0.8em} \normalsize\normalfont Shows the state machine transitions for an agent session: initialization (\code{page\_understanding}) $\rightarrow$ interaction loop (\code{simulating}) $\rightarrow$ completion checks (\code{complete}). Transitions are managed deterministically in Python to prevent LLM cognitive loops.}}
+  \caption{PagePhase state machine transition diagram.}
+  \label{fig:pagephase-state}
+\end{figure}
 
 \subsection{Action Guards}
 \label{sec:action-guards}
 
-% TODO: Five guards: scroll stagnation, observe spiral, repeat-action,
-% grounding guard, navigate interception
+To protect the simulation against runaway agent behaviors, the execution engine passes every chosen action through five deterministic guards before calling Playwright:
+\begin{itemize}
+    \item \textbf{Scroll Stagnation Guard:} If the agent chooses to scroll the page, the guard checks the page height. If three consecutive scroll actions result in no change in the scroll offset, the guard blocks further scroll commands.
+    \item \textbf{Observe Spiral Guard:} If the agent repeatedly selects the \code{observe} or \code{wait} action without performing physical input, the loop is capped to prevent wasting API tokens.
+    \item \textbf{Repeat-Action Guard:} Blocks the agent from clicking the exact same CSS selector more than three times if the DOM structure remains identical.
+    \item \textbf{Grounding Guard:} Resolves the target selector in the live page. If the selector does not exist, is hidden, or is not interactable (e.g., covered by an overlay), the action is rejected and the agent is prompted to select a different element.
+    \item \textbf{Navigate Interception Guard:} Overrides window navigation events. If a click triggers a redirection to an external domain (e.g., an ad network or social media link), the engine cancels the navigation and restores the target page state.
+\end{itemize}
 
 \subsection{Issue Detection Paths}
 \label{sec:issue-detection}
 
-% TODO: Three parallel paths: inline LLM detection, failure analysis,
-% post-simulation audit
+Accessibility and usability issues are collected through three parallel paths during the simulation. First, the inline LLM detection path captures issues flagged in the agent's \code{Reflect} phase (e.g., visual layout overlaps or confusing copy). Second, the execution path captures system-level exception errors, such as clicking an element that fails to respond within a timeout window, indicating a broken interaction. Third, the post-simulation audit path executes a static axe-core run on the final page state, capturing hidden code-level violations (such as duplicate IDs or missing landmarks) that do not directly impede interaction but violate standards.
 
 
 % ---- 4.4 Browser Instrumentation -------------------------------------------
 \section{Browser Instrumentation}
 \label{sec:browser}
 
+The browser instrumentation layer isolates the execution contexts of the persona agents, ensuring that dynamic DOM updates, styles, and cookie states are captured accurately.
+
 \subsection{Playwright Engine}
 \label{sec:playwright-engine}
 
-% TODO: PlaywrightEngine context manager, action execution, DOMState extraction
+The browser automation layer is managed by the \code{PlaywrightEngine} context manager. This class wraps a Playwright Chromium instance and exposes high-level interaction commands. During execution, it automatically waits for network idle states and resolves dynamic target selectors. 
+
+To present the DOM to the LLM agent, the engine implements a custom \code{DOMState} extraction routine. It walks the DOM tree, filters out non-visible elements, and constructs a simplified HTML-like tree representation containing only interactive tags, structural headings, alt text for images, and ARIA labels. Additionally, it takes high-resolution screenshots of the viewport at each step, bounding box annotations of interactive elements, and saves them to the session storage.
 
 \subsection{Shared Browser Architecture}
 \label{sec:shared-browser}
 
-% TODO: _SharedBrowser, _ThreadLocalPlaywright, health monitoring
+Launching a separate browser process (Chromium) for every persona agent is resource-intensive and leads to high CPU usage when running multiple pages in parallel. To solve this, \versimux{} implements a shared browser architecture managed by a singleton \code{_SharedBrowser} wrapper combined with \code{_ThreadLocalPlaywright}. 
 
-% TODO: Add Fig 4.5 — Browser process sharing architecture
+When the graph execution begins, the backend launches a single, persistent Chromium browser process. Each concurrent persona agent thread requests a connection, and the wrapper issues an isolated, lightweight \code{BrowserContext}. These contexts operate in parallel inside the single parent process, maintaining completely isolated cookies, local storage, and caches. The wrapper monitors process health; if the parent Chromium process crashes or consumes excessive memory, it automatically terminates and spawns a fresh instance, transparently recovering the active agent sessions.
+
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{6cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 4.5: Browser Process Sharing Architecture]\\ \vspace{1em} \normalsize\normalfont Outlines how the \code{\_SharedBrowser} singleton hosts isolated contexts for multiple concurrent threads. This thread-local driver recycling prevents process bloat and reduces memory consumption under parallel workloads.}}
+  \caption{Process-sharing and isolation architecture for browser simulations.}
+  \label{fig:shared-browser}
+\end{figure}
 
 \subsection{Sandbox Setup}
 \label{sec:sandbox}
 
-% TODO: HTML temp file, storage seed injection
+To evaluate local files or raw HTML snippets securely, the sandbox setup routine writes the target HTML content to a temporary file on disk under a unique, hash-based filename. The engine configures the Playwright context to disable external network access if requested, binds route interceptors to block tracking scripts, and navigates the browser to the local file URL. Immediately prior to page load, it executes an initialization script that injects the storage seeds (localStorage/sessionStorage) generated during the supervisor phase.
 
 
 % ---- 4.5 Trace Integrity Verification --------------------------------------
 \section{Trace Integrity Verification}
 \label{sec:trace-verification}
 
-% TODO: Rule-based verification, step verdicts, trace aggregation,
-% issue discarding, design rationale
+Because the persona simulation loop relies on generative language models, agent traces are prone to execution drift. An agent might report having filled a form successfully when in reality the interaction timed out, or it might submit redundant actions that bypass the target task. To filter out low-quality evaluation data before it reaches the clustering and remediation stages, \versimux{} implements a rule-based trace integrity verification subsystem.
 
-% Example table:
-% \begin{table}[htbp]
-%   \centering
-%   \caption{Trace verification rules and their verdicts.}
-%   \label{tab:verification-rules}
-%   \begin{tabularx}{\textwidth}{@{}l X c@{}}
-%     \toprule
-%     \textbf{Rule} & \textbf{Trigger Condition} & \textbf{Verdict} \\
-%     \midrule
-%     Loop detection & Identical (action, selector) repeated & INVALID \\
-%     % ... more rules
-%     \bottomrule
-%   \end{tabularx}
-% \end{table}
+For each simulation trace, the verifier evaluates the step logs against a sequence of rules and assigns a step-level verdict. If a trace accumulates too many invalid steps or fails to progress past layout loading, the entire trace is discarded, and the supervisor is notified to re-evaluate the persona configuration. The verification rules and their corresponding verdicts are described in \cref{tab:verification-rules}.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Trace verification rules and their verdicts.}
+  \label{tab:verification-rules}
+  \begin{tabularx}{\textwidth}{@{}l X c@{}}
+    \toprule
+    \textbf{Rule} & \textbf{Trigger Condition} & \textbf{Verdict} \\
+    \midrule
+    Loop Detection      & Identical action and selector selector repeated three times  & \code{INVALID} \\
+    Selector Existence  & Selector missing from DOM tree at execution time             & \code{FAILED}  \\
+    Redirect Block      & Navigation event routes to non-authorized external domain    & \code{BLOCKED} \\
+    Redundant Click     & Clicking an already active tab or button with no state change & \code{REDUNDANT} \\
+    Action Success      & Playwright executes command with DOM updates                 & \code{VALID}   \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
 
 % ---- 4.6 Issue Clustering ---------------------------------------------------
 \section{Issue Clustering}
 \label{sec:clustering}
 
-% TODO: Embedding, HDBSCAN, dynamic min_cluster_size, fallback, metadata
+Simulating multiple personas on a single page often yields overlapping issue reports. For example, if a main search input lacks a label, the screen-reader user, the keyboard user, and the static axe-core audit will all report the same violation, using different wording. To avoid proposing redundant or conflicting code fixes, \versimux{} clusters issues into unified diagnostic definitions.
 
-% TODO: Add Fig 4.6 — Clustering pipeline
+The clustering pipeline processes the text descriptions of all verified issues through three stages:
+\begin{enumerate}
+    \item \textbf{Embedding Generation:} Converts each issue description into a 384-dimensional dense vector using a sentence-transformer model (specifically, \code{all-MiniLM-L6-v2}~\cite{reimers2019sentencebert}).
+    \item \textbf{Density Clustering:} Groups the embeddings using the HDBSCAN algorithm~\cite{mcinnes2017hdbscan}. Unlike K-Means, HDBSCAN does not require pre-specifying the cluster count and effectively flags outliers as noise. The minimum cluster size is dynamically scaled based on the total issue count.
+    \item \textbf{Deduplication & Merge:} For each cluster, the engine merges the issues into a single, unified ticket containing the target CSS selector, the aggregated list of affected personas, and a synthesized description. Issues flagged as noise are preserved as single-element clusters. If the sentence-transformer dependency fails to load, the engine falls back to an exact selector matching algorithm to ensure continuity.
+\end{enumerate}
+
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{6.5cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 4.6: Clustering Pipeline]\\ \vspace{1em} \normalsize\normalfont Maps the flow of issue extraction: issue logs are vectorized, grouped via density analysis (HDBSCAN), filtered for duplicates, and compiled into recommender input profiles.}}
+  \caption{Flow diagram of the semantic issue clustering pipeline.}
+  \label{fig:clustering-pipeline}
+\end{figure}
 
 
 % ---- 4.7 Recommender Agent and Patch Synthesis ------------------------------
 \section{Recommender Agent and Patch Synthesis}
 \label{sec:recommender}
 
+The recommender agent is responsible for translating the grouped issue clusters into concrete code repairs.
+
 \subsection{RecommenderProfile Generation}
 \label{sec:recommender-profiles}
 
-% TODO: Profile fields, supervisor generation, fallback profiles
+For each issue cluster, the supervisor creates a \code{RecommenderProfile} specifying the required expertise (HTML, CSS, or JS), a strategy hint (e.g., "Add ARIA live regions," or "Fix color contrast using design tokens"), and a priority score based on severity. If the supervisor is unable to formulate a strategy, a fallback profile generator assigns a default priority and copies the raw issue text as the repair target.
 
 \subsection{Patch Proposal}
 \label{sec:patch-proposal}
 
-% TODO: LLM call, prompt structure, response parsing
+The recommender agent consumes the profile and target HTML snippet. Operating as parallel nodes within the thread pool, each recommender generates candidate repairs. The agent is prompted to produce a structured JSON response containing the target CSS selector, the patch type, and the replacement code snippet. The model is instructed to make surgical edits rather than rewriting large sections of the DOM.
 
 \subsection{Patch Type Normalisation and Snippet Validation}
 \label{sec:patch-normalisation}
 
-% TODO: _PATCH_TYPE_ALIASES, _looks_like_html/css/js, CSS promotion,
-% JS recovery, DOMContentLoaded wrapping
+Language models frequently return code snippets containing syntax discrepancies. To handle this, the recommender system runs a post-processing normalization filter. If a patch is marked as HTML but contains only class declarations, it is normalized to CSS. Snippets are verified using regex checks (\code{_looks_like_html}, \code{_looks_like_css}) to prevent malformed injections. Additionally, JavaScript patches are automatically wrapped in a \code{DOMContentLoaded} event listener to prevent runtime errors when injected into the page header.
 
 \subsection{Swarm Stigmergy}
 \label{sec:swarm-claims}
 
-% TODO: swarm_claims mechanism for cross-agent awareness
+To prevent parallel recommender agents from modifying the same target element in conflicting ways, the pipeline uses a swarm stigmergy pattern. The global state contains a \code{swarm_claims} registry. When an agent proposes a patch, it logs the target CSS selector and affected element attributes to the registry. Downstream recommender nodes inspect this shared registry before proposing their own repairs; if they detect that an element is already claimed by a peer agent, they modify their patch target or negotiate an alternative strategy.
 
 
 % ---- 4.8 Conflict Detection and Resolution ----------------------------------
 \section{Conflict Detection and Resolution}
 \label{sec:conflict-resolution}
 
+When multiple recommender agents propose patches, conflicts can arise if changes overlap on the same HTML elements. The conflict resolution subsystem identifies and resolves these overlaps.
+
 \subsection{Conflict Detection}
 \label{sec:conflict-detection}
 
-% TODO: LLM-based detection with heuristic fallback
+The system identifies conflicts through two methods: a rule-based selector intersection check (which flags patches targeting the same CSS selectors or nested child nodes) and an LLM-based compatibility scan. The scan evaluates pairs of patches to check if their styles or script handlers conflict (e.g., one patch binding a keypress handler while another binds keydown on the same control).
 
 \subsection{Negotiation Protocol}
 \label{sec:negotiation}
 
-% TODO: Multi-round negotiation: argument phase + mediation phase
+If a conflict is detected, the resolver initiates a multi-round negotiation protocol between the proposing agents. During the *Argument Phase*, the two agents are prompted to justify their repairs, describing how their patch addresses the target accessibility barrier. In the *Mediation Phase*, a resolver agent reviews both arguments and either chooses one over the other, merges them into a single patch, or returns a fallback decision based on the severity priority of the underlying issues.
+
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{6.5cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 4.7: Conflict Resolution Workflow]\\ \vspace{1em} \normalsize\normalfont Illustrates the multi-round negotiation process: from conflict detection, through parallel agent debates, to the final resolved patch output. Heuristics resolve deadlocks if negotiation fails.}}
+  \caption{Workflow of the multi-agent conflict detection and negotiation protocol.}
+  \label{fig:conflict-workflow}
+\end{figure}
 
 \subsection{Resolution Outcomes}
 \label{sec:resolution-outcomes}
 
-% TODO: chose_a, chose_b, merged, unresolved + confidence tiebreak
-
-% TODO: Add Fig 4.7 — Conflict resolution workflow
+The negotiation results in one of four outcomes:
+\begin{description}
+    \item[Chose A / Chose B:] One patch is selected, and the conflicting patch is discarded.
+    \item[Merged:] The code changes are consolidated into a single patch.
+    \item[Unresolved Fallback:] If the negotiation fails to reach a consensus, the resolver applies a heuristic tiebreaker, selecting the patch targeting the higher-priority WCAG failure.
+\end{description}
 
 
 % ---- 4.9 Patch Application -------------------------------------------------
 \section{Patch Application}
 \label{sec:patch-application}
 
-% TODO: Application order (HTML → CSS → JS → remove), replacement strategies,
-% CSS/JS injection, HTML validation
+Once conflicts are resolved, the unified patch set is applied to the HTML. The applicator orders the execution: first applying HTML attribute edits, then injecting CSS stylesheet modifications, and finally appending JavaScript event handlers. The HTML is modified using a precise text-replacement engine that matches selector targets and attributes, verifying the resulting structure with a linter to ensure tag hierarchy is preserved.
 
 
 % ---- 4.10 Verification Loop and Correction ----------------------------------
 \section{Verification Loop and Correction}
 \label{sec:verification-loop}
 
-% TODO: Per-persona verification, pass criteria, correction loop mechanism
+To close the evaluation loop, the verification subsystem re-simulates the user personas on the patched HTML. The system extracts the subset of personas that failed their initial goals or experienced accessibility violations and runs them through a second browser simulation session. If all personas complete their tasks and no new issues are introduced, the patch set is verified. If issues remain, the pipeline increments the correction count and runs a second patch synthesis iteration, up to the configured loop limit.
 
-% TODO: Add Fig 4.8 — Patch application and verification loop
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{6.5cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 4.8: Patch Application and Verification Loop]\\ \vspace{1em} \normalsize\normalfont Details the closed-loop verification flow: the applicator applies the patch set, the verifier re-spawns failing personas, and the system decides whether to release the final report or re-enter the patch generation loop.}}
+  \caption{Closed-loop patch application, verification, and correction loop.}
+  \label{fig:verification-loop}
+\end{figure}
 
 
 % ---- 4.11 Report Generation -------------------------------------------------
 \section{Report Generation}
 \label{sec:report-generation}
 
-% TODO: Score calculation, JSON/Markdown/PDF output
+The final node of the pipeline compiles the diagnostic results into a report. The generator computes an overall score for the page, deducting points based on the severity of unresolved accessibility failures (e.g., WCAG Level A violations carry higher penalties than AAA issues) and interaction friction metrics (such as the average step count per persona). The report is saved to disk as a structured JSON file, a rendered markdown summary, and a PDF document containing the timeline of applied fixes and verification outcomes.

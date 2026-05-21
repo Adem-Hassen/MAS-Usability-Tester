@@ -11,52 +11,142 @@ This chapter examines the \acr{LLM} integration layer as a first-class engineeri
 \section{Agent Roles and Prompt Architecture}
 \label{sec:agent-roles}
 
-% TODO: Table of agent roles with model assignments, temperatures, purposes
-% TODO: Explain system/user prompt separation pattern
-% TODO: JSON-only output constraint and unwrapping logic
+To implement a multi-agent system that is both reliable and resource-efficient, \versimux{} avoids using a single, monolithic agent configuration. Instead, it partitions system tasks across five specialised agent roles. Each role is configured with distinct large language models, sampling temperatures, and system instructions tailored to its cognitive demands. This role separation ensures that high-reasoning models (such as Llama 3.3 70B) are reserved for complex structural analysis and patch negotiation, while faster, lower-cost models (such as Llama 3.1 8B) are routed to repetitive simulation tasks. \Cref{tab:agent-roles} details the configuration of these roles.
+
+\begin{table}[htbp]
+  \centering
+  \caption{VerSimUX Agent Roles Configuration.}
+  \label{tab:agent-roles}
+  \begin{tabularx}{\textwidth}{@{}l L{4cm} c X@{}}
+    \toprule
+    \textbf{Agent Role} & \textbf{Default LLM Model} & \textbf{Temp.} & \textbf{Functional Purpose} \\
+    \midrule
+    Supervisor          & Llama 3.3 70B Versatile     & 0.3            & Extracts DOM landmarks, calculates persona budgets, and generates recommender profiles. \\
+    Persona             & Llama 3.1 8B Instant        & 0.7            & Simulates human user navigation, executing Plan-Decide-Reflect loops inside browser sandboxes. \\
+    Recommender         & Llama 3.3 70B Versatile     & 0.7            & Translates clustered usability reports into code-level patches. \\
+    Conflict Resolver   & Llama 3.3 70B Versatile     & 0.2            & Detects selector overlaps and mediates multi-round debates between recommending agents. \\
+    Verifier            & Llama 3.3 70B Versatile     & 0.0            & Assesses patched HTML layouts to confirm accessibility compliance and prevent regressions. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{System/User Prompt Separation Pattern}
+\label{sec:prompt-separation}
+
+The system employs a strict separation of concerns within its prompt design. All static, domain-specific rules (such as accessibility standards, task descriptions, and behavioral constraints) are defined in the LLM's \textit{System Messages}. In contrast, dynamic, session-specific data (such as the current DOM state, the step history, and the active working memory) are injected exclusively via \textit{User Messages}. 
+
+This separation prevents the model from conflating target goals with state parameters. System prompts are structured using XML-like tags (e.g., \code{<instructions>}, \code{<constraints>}, \code{<output_format>}) to help the model distinguish instructions from data.
+
+\subsection{JSON-Only Output Constraint and Parsing Recovery}
+\label{sec:json-constraints}
+
+To interface programmatically with downstream python components, all agents must return data in structured, valid JSON formats. Rather than relying on simple prompt guidelines, \versimux{} enforces this constraint at three levels:
+\begin{enumerate}
+    \item \textbf{API-Level JSON Mode:} The system passes the \code{response_format={"type": "json_object"}} parameter to the LLM client (when supported by the provider, as detailed in Section~\ref{sec:model-routing}), forcing the model to generate a valid JSON string.
+    \item \textbf{Schema Injection:} The system automatically appends a strict JSON schema representation to the user prompt, specifying all required fields and data types.
+    \item \textbf{Robust Unwrapping Logic:} If the model wraps its output in markdown code blocks (e.g., \code{```json ... ```}), the parsing helper extracts the raw content using regular expressions. If parsing fails, the system executes a retry loop with a correction prompt pointing out the JSON syntax error. If all retries fail, the system initializes a safe fallback stub structure to prevent application crashes.
+\end{enumerate}
 
 
 % ---- 5.2 Persona Reasoning and Cognitive Pipeline ---------------------------
 \section{Persona Reasoning and Cognitive Pipeline}
 \label{sec:cognitive-reasoning}
 
-% TODO: Detail the 6-phase pipeline rationale
-% TODO: Explain Plan/Decide decoupling as anti-hallucination measure
-% TODO: Add Fig 5.1 — Persona cognitive pipeline (6 phases)
+The core simulation executes a cyclic, six-phase cognitive pipeline designed to mimic human browsing behavior: Page Understanding, Plan, Decide, Execute, Evaluate, and Reflect.
+
+\subsection{Plan/Decide Decoupling as an Anti-Hallucination Measure}
+\label{sec:plan-decide-decoupling}
+
+In traditional ReAct-style agent loops, the agent is prompted to output both its reasoning and its action in a single step (e.g., "Thought: I need to click the search button. Action: click('#search')"). When applied to web navigation, this frequently causes "execution hallucinations," where the LLM decides on an action and invents a target element selector that does not actually exist in the current page state. 
+
+To resolve this issue, \versimux{} decouples planning from action decision. In the \textbf{Plan Phase}, the agent reviews its high-level goal and updates its abstract strategy (e.g., "I need to find the submission form"). In the subsequent \textbf{Decide Phase}, the agent is presented with a strictly sanitized, numbered list of interactive DOM elements. The agent must choose its target by selecting one of these pre-validated numbers, preventing it from inventing selectors or attempting to interact with hidden page nodes.
+
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{6.5cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 5.1: Persona Cognitive Pipeline Prompt Structure]\\ \vspace{1em} \normalsize\normalfont Illustrates how the persona prompt separates system rules, task goals, working memory, DOM states, and historical trace variables into distinct segments, feeding them into the partitioned Plan-Decide-Reflect pipeline.}}
+  \caption{Prompt structure and token architecture for the decoupled persona simulation pipeline.}
+  \label{fig:cognitive-prompt-structure}
+\end{figure}
 
 
 % ---- 5.3 Working Memory and Grounding Guards --------------------------------
 \section{Working Memory and Grounding Guards}
 \label{sec:grounding-guards}
 
-% TODO: WorkingMemory dataclass design
-% TODO: Python-only enforcement rationale
-% TODO: Five guard types with examples
+To keep agent execution aligned with the target interface's physical state, \versimux{} maintains its primary state representation in Python dataclasses, rather than in the LLM's context.
+
+\subsection{WorkingMemory Dataclass Design}
+\label{sec:workingmemory-design}
+
+The agent's state is encapsulated in the \code{WorkingMemory} dataclass, which tracks variables including:
+\begin{itemize}
+    \item \code{action_history}: A list of previously executed actions, selectors, and outcomes.
+    \item \code{current_page_url}: The active browser address.
+    \item \code{steps_taken}: The current execution step count.
+    \item \code{observed_errors}: Any accessibility or interaction errors encountered during simulation.
+\end{itemize}
+
+Maintaining this state in Python prevents the LLM from entering repetitive execution loops. If the LLM generates a duplicate action, the Python runtime intercepts the command and registers a failure in the history logs, forcing the model to adapt its plan on the next turn.
+
+\subsection{Grounding Guards}
+\label{sec:guards-logic}
+
+The system implements five grounding guards that validate all selected actions prior to execution:
+\begin{enumerate}
+    \item \textbf{Scroll Stagnation:} Prevents the agent from repeatedly scrolling when the page height does not change.
+    \item \textbf{Observe Spiral:} Limits consecutive "wait" commands to avoid API usage waste.
+    \item \textbf{Repeat-Action:} Blocks clicking the same selector consecutively if the page structure remains identical.
+    \item \textbf{DOM Grounding:} Resolves the chosen selector against the active DOM tree. If the target is missing or hidden, the execution is blocked, and the failure is logged.
+    \item \textbf{Navigate Interception:} Intercepts navigation events that route to external domains, preserving the local sandbox environment.
+\end{enumerate}
 
 
 % ---- 5.4 Model Routing and Rate Limiting ------------------------------------
 \section{Model Routing and Rate Limiting}
 \label{sec:model-routing}
 
-% TODO: Per-role router singletons
-% TODO: Provider detection by model prefix
-% TODO: Per-key semaphore, JSON mode injection
-% TODO: Add Fig 5.2 — Model routing decision tree
+The \code{LLMRouter} class manages model selection and rate limiting. It abstracts provider connections, routing requests to Groq, Moonshot, DeepSeek, Qwen, or OpenRouter based on model name prefixes.
+
+\subsection{Provider Detection and Parameter Normalisation}
+\label{sec:provider-detection}
+
+When a request is submitted, the router identifies the destination provider by parsing the model string prefix (e.g., \code{deepseek-} routing to DeepSeek's endpoints, and \code{kimi-} routing to Moonshot). 
+
+It automatically normalizes parameters to match provider constraints (for example, forcing Moonshot/Kimi temperatures to exactly 1.0, or disabling JSON mode for providers that do not support it, such as legacy Qwen models, as shown in Section~\ref{sec:model-routing}).
+
+\subsection{Key Pool Semaphores and Rate Limiting}
+\label{sec:key-pool-semaphores}
+
+To handle API rate limits during parallel simulations, \versimux{} coordinates requests using a key-pool semaphore architecture. If multiple API keys are configured (provided as a comma-separated list), the router automatically rotates through them per attempt. Each key is associated with a thread-safe \code{_KeyState} container that manages a semaphore to cap concurrent requests, alongside a sliding-window Tokens-Per-Minute (TPM) budget manager. If the window is exhausted, the thread sleeps until budget becomes available, preventing API key throttling.
+
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{6.5cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 5.2: Model Routing Decision Tree]\\ \vspace{1em} \normalsize\normalfont Traces how the \code{LLMRouter} handles request routing: checking the model prefix, selecting the provider, normalising parameters, acquiring the key-specific semaphore, waiting for the TPM budget, and making the API call with backoff retries.}}
+  \caption{Decision tree and rate-limiting flow of the model routing layer.}
+  \label{fig:model-routing-tree}
+\end{figure}
 
 
 % ---- 5.5 Failure Handling and Fallback Strategies ---------------------------
 \section{Failure Handling and Fallback Strategies}
 \label{sec:failure-handling}
 
-% TODO: Enumerate all fallback paths (every LLM call has one)
-% TODO: Discuss "graceful degradation" principle
+The system follows a "graceful degradation" design principle: it must always complete the evaluation and generate a report, even if external services crash or API keys are throttled. Every LLM invocation is backed by a fallback path:
+\begin{itemize}
+    \item \textbf{Supervisor Analysis Fallback:} If the LLM structural analysis fails, the system executes a BeautifulSoup parser fallback to extract interactive inputs and anchors, generating a basic analysis stub.
+    \item \textbf{Persona Simulator Stuck-State Recovery:} If a persona agent becomes stuck or repeatedly executes invalid commands, the simulator halts the session and builds a partial result using the accumulated action logs.
+    \item \textbf{Clustering Fallback:} If the sentence-transformer embeddings fail, the clustering engine groups issues by exact selector matches.
+    \item \textbf{Conflict Negotiation Fallback:} If the conflict resolver agents fail to agree on overlapping patches, the system falls back to a heuristic tiebreaker based on issue severity.
+\end{itemize}
 
 
 % ---- 5.6 Prompt Design Patterns --------------------------------------------
 \section{Prompt Design Patterns}
 \label{sec:prompt-patterns}
 
-% TODO: Target enumeration (anti-hallucination)
-% TODO: Memory injection format
-% TODO: Compact formatting for token efficiency
-% TODO: JSON-only output constraint
+To optimize prompt sizes and prevent token bloat, the system uses three design patterns:
+\begin{description}
+    \item[Target Element Enumeration:] The supervisor sanitizes the active page HTML, extracts interactive nodes, and assigns them unique, bracketed identifiers (e.g., \code{[1]}, \code{[2]}). The agent selects elements by their identifier, rather than passing lengthy CSS selectors in the prompt, reducing input token footprints.
+    \item[Dynamic DOM Pruning:] Unrelated DOM nodes are removed from the page representation. Text elements are stripped of duplicate white space and redundant nesting levels, reducing prompt size while retaining page accessibility metadata.
+    \item[Structured JSON Outlining:] Prompt instructions explicitly list the keys, values, and structural shapes expected in the agent's response, reducing formatting errors and minimizing parsing retries.
+\end{description}

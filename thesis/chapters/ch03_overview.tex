@@ -30,13 +30,12 @@ The design of \versimux{} is guided by five principles:
 \section{End-to-End Pipeline Walkthrough}
 \label{sec:pipeline-walkthrough}
 
-% TODO: Add Fig 3.1 — Full system architecture diagram
-% \begin{figure}[htbp]
-%   \centering
-%   \includegraphics[width=\textwidth]{ch03/fig_3_1_system_architecture.pdf}
-%   \caption{Overall system architecture showing the three-tier design: frontend client, backend API server, and the LangGraph agent pipeline.}
-%   \label{fig:system-architecture}
-% \end{figure}
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{7cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 3.1: Full System Architecture Diagram]\\ \vspace{1em} \normalsize\normalfont Displays the three-tier design of \versimux{}: the Next.js Nexus client, the FastAPI backend API server with SQLite and the event bus, and the core LangGraph multi-agent pipeline.}}
+  \caption{Overall system architecture showing the three-tier design: frontend client, backend API server, and the LangGraph agent pipeline.}
+  \label{fig:system-architecture}
+\end{figure}
 
 The \versimux{} pipeline processes a single HTML document through twelve sequential stages:
 
@@ -66,13 +65,12 @@ The \versimux{} pipeline processes a single HTML document through twelve sequent
   \item \textbf{Report Generation.} A comprehensive diagnostic report is generated with scores, issue details, applied patches, and verification results.
 \end{enumerate}
 
-% TODO: Add Fig 3.2 — Pipeline stage sequence diagram
-% \begin{figure}[htbp]
-%   \centering
-%   \includegraphics[width=\textwidth]{ch03/fig_3_2_pipeline_sequence.pdf}
-%   \caption{The twelve-stage pipeline from HTML upload to report generation.}
-%   \label{fig:pipeline-sequence}
-% \end{figure}
+\begin{figure}[htbp]
+  \centering
+  \framebox[\textwidth]{\rule{0pt}{7cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 3.2: Pipeline Stage Sequence Diagram]\\ \vspace{1em} \normalsize\normalfont Illustrates the temporal progression and state changes across the twelve pipeline stages, highlighting the iterative correction loop between patch verification and persona re-simulation.}}
+  \caption{The twelve-stage pipeline sequence from HTML upload to report generation.}
+  \label{fig:pipeline-sequence}
+\end{figure}
 
 
 % ---- 3.3 Technology Stack ----------------------------------------------------
@@ -109,19 +107,13 @@ The \versimux{} pipeline processes a single HTML document through twelve sequent
 Several architectural decisions reflect deliberate trade-offs:
 
 \paragraph{LangGraph over linear orchestration.}
-% TODO: Explain why the state-graph model was chosen over a simple
-% sequential script: parallel page processing, conditional correction loops,
-% typed state accumulation with parallel-write safety.
+Linear orchestration scripts are inherently brittle when applied to complex agentic workflows that require branching, error recovery, or feedback loops. A simple sequential execution path cannot easily accommodate the loopback flows required for closed-loop remediation, where failing verification results trigger a return to persona simulation. By using LangGraph, \versimux{} models the evaluation and remediation pipeline as a directed state graph. This formal structure supports conditional edges to route execution back to earlier phases, parallel fan-out via the \code{Send()} primitive to evaluate multiple HTML documents and personas concurrently, and typed state accumulation. Crucially, LangGraph's state design allows parallel branches to merge their results into a unified, type-safe schema using custom reducer functions (e.g., \code{operator.add}), eliminating the need to write custom concurrency locks or synchronization primitives.
 
 \paragraph{ThreadPoolExecutor over asyncio for persona simulation.}
-% TODO: Explain why persona simulation uses threads: Playwright's sync API
-% is more stable, thread-local browser driver caching, simpler error isolation.
+While asynchronous I/O via Python's \code{asyncio} is highly efficient for network-bound operations, integrating it with browser automation libraries like Playwright introduces significant event-loop complexity when scaled across multiple concurrent instances. Parallel browser automation runs frequently block the event loop, causing timeouts and race conditions in LLM prompt generation and DOM interaction. Furthermore, if a single page simulation crashes or hangs, isolating the event loop failure can be challenging. \versimux{} resolves these reliability concerns by using sync-mode Playwright wrapped in OS-level threads managed by a \code{ThreadPoolExecutor}. This model provides robust thread-local isolation: each persona agent maintains its own thread, its own Chromium browser context, and independent error boundaries. The slightly higher memory overhead of system threads is a worthwhile trade-off for the increased stability and cleaner exception handling during concurrent simulations.
 
 \paragraph{SQLite over Redis for event persistence.}
-% TODO: Explain the simplicity-over-performance trade-off: single-process
-% deployment, no external dependencies, sufficient for the expected
-% event throughput.
+To support real-time user-interface telemetry and SSE streaming, the backend requires a persistent database to record job events, telemetry logs, and diagnostic states. While dedicated in-memory stores like Redis are standard for high-throughput streaming architectures, they introduce external system daemon dependencies, increasing the complexity of setup and local deployment. Because \versimux{} is designed as a developer-facing tool running locally or in single-host container environments, high-throughput clustering is unnecessary. A local SQLite database configured with Write-Ahead Logging (WAL) and synchronous mode set to normal offers sufficient write performance (exceeding hundreds of transactions per second) and concurrent read safety, while maintaining a single-file, zero-dependency deployment model.
 
 \paragraph{Python-maintained working memory over LLM self-tracking.}
-% TODO: Explain the grounding rationale: LLMs cannot be trusted to
-% accurately maintain their own state across multi-turn interactions.
+In multi-turn web navigation simulations, the persona agent must track its operational state (e.g., active page context, target form fields filled, remaining interaction steps, and past action history). Allowing the underlying \acr{LLM} to self-track this state through prompt instructions or conversational memory inevitably leads to cognitive drift, where the model forgets its remaining step budget, hallucinates having filled non-existent inputs, or enters repetitive interaction loops. \versimux{} avoids this failure mode by keeping the agent's core working memory strictly in Python data structures (specifically, the \code{WorkingMemory} dataclass). After each browser interaction, the Python runtime updates the state variables, counts down the step budget, and formats this structured state to be injected into the next LLM prompt. This hybrid approach ensures that the model remains grounded in physical reality, preventing context hallucination while leveraging the LLM's reasoning power for action decision-making.
