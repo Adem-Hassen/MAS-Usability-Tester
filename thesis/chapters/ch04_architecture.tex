@@ -248,10 +248,19 @@ Simulating multiple personas on a single page often yields overlapping issue rep
 
 The clustering pipeline processes the text descriptions of all verified issues through three stages:
 \begin{enumerate}
-    \item \textbf{Embedding Generation:} Converts each issue description into a 384-dimensional dense vector using a sentence-transformer model (specifically, \code{all-MiniLM-L6-v2}~\cite{reimers2019sentencebert}).
-    \item \textbf{Density Clustering:} Groups the embeddings using the HDBSCAN algorithm~\cite{mcinnes2017hdbscan}. Unlike K-Means, HDBSCAN does not require pre-specifying the cluster count and effectively flags outliers as noise. The minimum cluster size is dynamically scaled based on the total issue count.
-    \item \textbf{Deduplication & Merge:} For each cluster, the engine merges the issues into a single, unified ticket containing the target CSS selector, the aggregated list of affected personas, and a synthesized description. Issues flagged as noise are preserved as single-element clusters. If the sentence-transformer dependency fails to load, the engine falls back to an exact selector matching algorithm to ensure continuity.
+    \item \textbf{Embedding Generation:} Converts each issue into a rich text representation by concatenating its title, description (truncated to 300 characters), WCAG criterion, category, affected element, and source page identifier. This concatenated string is then encoded into a 384-dimensional dense vector using the \code{all-MiniLM-L6-v2} sentence-transformer model~\cite{reimers2019sentencebert}. The model is loaded lazily as a singleton to avoid repeated initialisation overhead, and PyTorch thread count is set to 1 to prevent CPU contention during parallel pipeline execution.
+    \item \textbf{Density Clustering:} Groups the embeddings using the HDBSCAN algorithm~\cite{mcinnes2017hdbscan} with the following hyperparameters:
+    \begin{itemize}
+        \item \textbf{\code{min\_cluster\_size} $= \max(2, \lfloor N/6 \rfloor)$}, where $N$ is the total issue count. This dynamic scaling ensures that clusters remain meaningful for both small ($N \leq 6$, yielding \code{min\_cluster\_size} $= 2$) and larger ($N = 18$, yielding \code{min\_cluster\_size} $= 3$) issue sets, matching the typical range of 4--20 issues per page.
+        \item \textbf{\code{min\_samples} $= 1$}, maximising cluster assignment and minimising noise points. This conservative setting is appropriate because the input issues are pre-verified by the trace integrity subsystem, meaning that genuinely noisy data has already been filtered out.
+        \item \textbf{\code{metric} = euclidean}, applied to the normalised sentence-transformer embeddings.
+        \item \textbf{\code{cluster\_selection\_method} = eom} (Excess of Mass), which favours selecting clusters that represent the most persistent density features in the hierarchy, producing stable cluster boundaries.
+    \end{itemize}
+    Issues flagged as noise (label $= -1$) are preserved as single-element clusters rather than discarded, ensuring no verified issue is lost.
+    \item \textbf{Deduplication \& Merge:} For each cluster, the engine derives metadata deterministically: the dominant severity (ranked by $\text{critical} > \text{high} > \text{medium} > \text{low}$, with frequency as the primary key and rank as the tiebreaker), the dominant category, the deduplicated list of affected personas and CSS selectors, and a synthesised representative description aggregating the top five issue titles. If the sentence-transformer dependency fails to load, the engine falls back to a category-based grouping algorithm that groups issues by their \code{IssueCategory} enum value.
 \end{enumerate}
+
+For very small issue sets ($N \leq 2$), the embedding and HDBSCAN stages are bypassed entirely, and issues are grouped directly by category to avoid unnecessary computational overhead.
 
 \begin{figure}[htbp]
   \centering

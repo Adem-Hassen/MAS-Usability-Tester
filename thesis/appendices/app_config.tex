@@ -4,7 +4,7 @@
 \chapter{Configuration Reference}
 \label{app:config}
 
-This appendix documents the configurable parameters of the \versimux{} system as defined in \filepath{config/settings.py}.
+This appendix documents the configurable parameters of the \versimux{} system as defined in \filepath{config/settings.py}. All parameters are loaded from environment variables or a \code{.env} file via \code{pydantic-settings}.
 
 \begin{longtable}{@{}l l L{7cm}@{}}
   \caption{System configuration parameters and their default values.}
@@ -23,12 +23,78 @@ This appendix documents the configurable parameters of the \versimux{} system as
   \bottomrule
   \endlastfoot
 
-  % TODO: Fill from config/settings.py
-  \code{max\_personas}                      & 5     & Maximum number of persona agents per page evaluation. \\
-  \code{max\_steps}                         & 10    & Maximum interaction steps per persona simulation. \\
-  \code{max\_correction\_loops}              & 1     & Maximum verification-correction iterations. \\
-  \code{verification\_resolution\_threshold} & 0.8   & Minimum ratio of critical/high issues that must be resolved to pass verification. \\
-  \code{conflict\_max\_negotiation\_rounds}  & 2     & Maximum negotiation rounds per conflict. \\
-  % ... add more parameters
+  \multicolumn{3}{@{}l}{\textbf{Agent Models and Temperatures}} \\
+  \addlinespace
+  \code{supervisor\_llm\_model}              & \code{llama-3.3-70b-versatile}  & LLM model for the Supervisor agent. \\
+  \code{supervisor\_temperature}             & 0.2   & Low temperature for deterministic, schema-conformant JSON output. \\
+  \code{persona\_llm\_model}                 & \code{llama-3.1-8b-instant}     & LLM model for Persona agents (highest call volume). \\
+  \code{persona\_temperature}                & 0.4   & Slightly higher for varied persona interaction patterns. \\
+  \code{recommender\_llm\_model}             & \code{llama-3.3-70b-versatile}  & LLM model for Recommender agents. \\
+  \code{recommender\_temperature}            & 0.1   & Very low --- patch generation must be precise. \\
+  \code{resolver\_llm\_model}                & \code{llama-3.1-70b-versatile}  & LLM model for the Resolver/Mediator agent. \\
+  \code{resolver\_temperature}               & 0.3   & Moderate --- needs flexibility for trade-off reasoning. \\
+  \addlinespace
+
+  \multicolumn{3}{@{}l}{\textbf{Per-Agent Output Token Limits}} \\
+  \addlinespace
+  \code{supervisor\_max\_tokens}             & 2048  & Max output tokens for supervisor LLM calls. \\
+  \code{persona\_max\_tokens}                & 512   & Max output tokens per persona step (short JSON actions). \\
+  \code{recommender\_max\_tokens}            & 1024  & Max output tokens for recommender patch proposals. \\
+  \code{resolver\_max\_tokens}               & 1024  & Max output tokens for conflict resolver responses. \\
+  \code{verifier\_max\_tokens}               & 1024  & Max output tokens for verification node responses. \\
+  \code{llm\_max\_output\_tokens}            & 1024  & Global fallback token limit. \\
+  \addlinespace
+
+  \multicolumn{3}{@{}l}{\textbf{LLM Retry and Backoff}} \\
+  \addlinespace
+  \code{llm\_max\_retries}                   & 5     & Retry attempts on LLM API errors before failing. \\
+  \code{llm\_retry\_delay\_seconds}          & 5.0   & Base delay (seconds) between retries with exponential backoff. \\
+  \addlinespace
+
+  \multicolumn{3}{@{}l}{\textbf{Parallel Rate-Limit Control}} \\
+  \addlinespace
+  \code{llm\_max\_concurrent\_calls}         & 5     & Max simultaneous in-flight LLM calls per API key. \\
+  \code{llm\_tpm\_limit}                     & 0     & Tokens-per-minute limit for sliding-window TPM tracker. 0 = disabled. \\
+  \code{llm\_inter\_request\_delay\_seconds} & 0.0   & Optional fixed delay after acquiring the semaphore slot. \\
+  \addlinespace
+
+  \multicolumn{3}{@{}l}{\textbf{Persona Configuration}} \\
+  \addlinespace
+  \code{max\_num\_personas}                  & 3     & Max personas generated per page. Scales run time linearly. \\
+  \code{use\_persona\_library}               & False & If True, supplements LLM-generated personas with pre-built templates. \\
+  \code{persona\_library\_path}              & \code{config/persona\_library.yaml} & Path to pre-built persona templates. \\
+  \code{persona\_max\_steps}                 & 10    & Max Playwright actions per persona (each step = 1 LLM call). \\
+  \code{persona\_action\_timeout\_seconds}   & 20.0  & Playwright timeout per action in seconds. \\
+  \code{persona\_page\_load\_timeout\_seconds} & 30.0 & Playwright timeout for full page load in seconds. \\
+  \code{persona\_headless}                   & True  & Run Playwright browser headless. Set False for debugging. \\
+  \addlinespace
+
+  \multicolumn{3}{@{}l}{\textbf{Issue Clustering}} \\
+  \addlinespace
+  \code{hdbscan\_min\_cluster\_size}         & 2     & Minimum issues to form a cluster. \\
+  \code{hdbscan\_min\_samples}               & 1     & HDBSCAN min\_samples. Lower = more clusters, fewer noise points. \\
+  \code{embedding\_model}                    & \code{all-MiniLM-L6-v2} & sentence-transformers model for issue embeddings. \\
+  \code{clustering\_similarity\_threshold}   & 0.75  & Cosine similarity threshold for deduplication before clustering. \\
+  \addlinespace
+
+  \multicolumn{3}{@{}l}{\textbf{Conflict Resolution}} \\
+  \addlinespace
+  \code{conflict\_strategy}                  & \code{llm} & Conflict resolution strategy (currently only \code{llm}). \\
+  \code{conflict\_max\_negotiation\_rounds}  & 1     & Max debate rounds per conflict before mediator decides. \\
+  \addlinespace
+
+  \multicolumn{3}{@{}l}{\textbf{Verification and Correction Loop}} \\
+  \addlinespace
+  \code{max\_correction\_loops}              & 0     & Max fix$\rightarrow$verify cycles. 0 = single-pass. \\
+  \code{verification\_resolution\_threshold} & 0.8   & Fraction of critical+high issues required to pass verification. \\
+  \addlinespace
+
+  \multicolumn{3}{@{}l}{\textbf{Output and Logging}} \\
+  \addlinespace
+  \code{output\_dir}                         & \code{outputs} & Directory for JSON reports and patched HTML. \\
+  \code{log\_level}                          & \code{INFO} & Logging verbosity (DEBUG, INFO, WARNING, ERROR). \\
+  \code{log\_format}                         & \code{console} & console = coloured human-readable; json = structured. \\
+  \code{save\_action\_traces}                & True  & Write each persona's full action trace JSON to output\_dir. \\
+  \code{save\_patched\_html}                 & True  & Write patched HTML file to output\_dir after verification. \\
 
 \end{longtable}

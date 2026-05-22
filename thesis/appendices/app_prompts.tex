@@ -4,51 +4,104 @@
 \chapter{Prompt Listings}
 \label{app:prompts}
 
-This appendix reproduces the key system and user prompts used by each agent role. Prompts are presented verbatim from the source files in \filepath{prompts/}.
+This appendix reproduces the key system prompts used by each agent role. Prompts are presented verbatim from the source files in \filepath{prompts/}. Due to length constraints, user prompt templates (which inject dynamic data) are summarised rather than reproduced in full.
 
 
 % ---- B.1 Supervisor Prompts -------------------------------------------------
 \section{Supervisor Agent Prompts}
 \label{app:supervisor-prompts}
 
-% TODO: Include SUPERVISOR_SYSTEM and SUPERVISOR_USER from
-% prompts/supervisor_prompts.py
-% Use \begin{lstlisting}[style=jsonstyle, caption={...}] ... \end{lstlisting}
+\subsection{UI Analysis (System Prompt)}
+
+The supervisor's UI analysis prompt instructs the LLM to act as a senior UX engineer performing static HTML analysis. It specifies a strict JSON output schema containing the UI purpose, type, accessibility risk level, demo credentials (if visible on the page), detected issue hints, critical interaction paths, and interactive elements.
+
+Key instructions include:
+\begin{itemize}
+    \item \textbf{Credential Detection:} The prompt explicitly instructs the model to scan the entire page for any text revealing login credentials, including hints in \code{<p>}, \code{<small>}, or \code{<aside>} elements and HTML comments.
+    \item \textbf{Specificity Enforcement:} The prompt provides examples of ``good'' vs.\ ``bad'' issue hints. Good hints name the affected element (e.g., ``Input \#email has no \code{<label>} element and no \code{aria-label} attribute''), while bad hints are rejected (e.g., ``Missing labels'').
+    \item \textbf{Risk Scoring:} A three-level rubric (high, medium, low) is defined based on the count of structural accessibility failures.
+    \item \textbf{Interactive Elements Cap:} Limited to 20 elements, prioritised as: form inputs $>$ buttons $>$ links $>$ other.
+\end{itemize}
+
+The user message template injects the raw HTML content and optional UI context description.
+
+\subsection{Persona Generation (System Prompt)}
+
+The persona generation prompt instructs the model to select diverse user personas from a predefined persona library. It enforces the following design rules:
+\begin{enumerate}
+    \item \textbf{Issue Coverage:} Personas must be selected to trigger each high-risk issue identified in the \code{detected\_issues\_hint} list.
+    \item \textbf{Diversity:} No \code{base\_id} may be selected more than once.
+    \item \textbf{Entry Points:} Must reference actual CSS selectors from the UI analysis.
+    \item \textbf{Observable Success Criteria:} Criteria must be verifiable by browser automation (e.g., ``A success message element is visible on the page'').
+    \item \textbf{Credential Usage:} If demo credentials are detected, the task goal must explicitly reference them.
+\end{enumerate}
+
+The user message injects the persona library JSON, UI context, UI analysis, and the \code{max\_num\_personas} parameter.
+
+\subsection{Trace Verification (System Prompt)}
+
+The trace verification prompt instructs the model to audit each step of a persona's action trace, assigning one of three verdicts: \code{valid}, \code{suspect}, or \code{invalid}. Key rules include:
+\begin{itemize}
+    \item A navigate action to a URL absent from the page is always \code{invalid}.
+    \item A click on a selector present in the page HTML is \code{valid} even if it failed at runtime.
+    \item Issues are not discarded merely because the step failed --- only if the step itself was hallucinated or impossible.
+    \item The overall verdict is \code{invalid} if $>$40\% of steps are invalid; \code{suspect} if $>$25\% are suspect.
+\end{itemize}
 
 
 % ---- B.2 Persona Prompts ----------------------------------------------------
 \section{Persona Agent Prompts}
 \label{app:persona-prompts}
 
+The persona agent uses separate system/user prompt pairs for each cognitive phase. Full prompt source is in \filepath{prompts/persona\_prompts.py}.
+
 \subsection{Plan Phase}
-% TODO: PLAN_SYSTEM, PLAN_USER
+
+The plan phase prompt provides the persona's complete profile (demographics, accessibility constraints, cognitive limitations, task goal, and interaction style) and the current working memory state. It instructs the model to output a short strategic plan for the next few steps, considering what has already been attempted and what remains.
 
 \subsection{Decision Phase}
-% TODO: DECISION_SYSTEM, DECISION_USER
+
+The decision phase prompt presents the sanitised, numbered list of interactive DOM elements and instructs the agent to select exactly one element by its bracketed index number. The model must choose from the available options only --- it cannot invent selectors. The output format is a structured JSON object containing the chosen element index, action type (\code{click}, \code{type}, \code{scroll}, \code{hover}, \code{observe}), and optional input value.
 
 \subsection{Evaluation Phase}
-% TODO: EVALUATE_SYSTEM, EVALUATE_USER
+
+The evaluation phase prompt asks the model to assess the outcome of the executed action: whether it succeeded, what changed on the page, and whether any accessibility or usability issues were observed. Issues must reference specific elements and include reproduction steps.
 
 \subsection{Reflection Phase}
-% TODO: REFLECT_SYSTEM, REFLECT_USER
+
+The reflection phase prompt asks the model to reflect on overall progress toward the task goal: whether the persona is on track, whether the current strategy should be revised, and whether the task should be marked as complete or abandoned.
 
 
 % ---- B.3 Recommender Prompts ------------------------------------------------
 \section{Recommender Agent Prompts}
 \label{app:recommender-prompts}
 
-% TODO: RECOMMENDER_SYSTEM, RECOMMENDER_USER
+The recommender system prompt instructs the agent to generate typed patch proposals for a given issue cluster. It enforces:
+\begin{itemize}
+    \item Patch type selection from the \code{PatchType} enum (9 categories).
+    \item Surgical edits rather than large DOM rewrites.
+    \item JSON output conforming to the \code{PatchProposal} schema.
+    \item Before/after HTML snippets for HTML patches; \code{css\_snippet} or \code{js\_snippet} fields for CSS/JS patches.
+    \item Automatic wrapping of JavaScript patches in \code{DOMContentLoaded} event listeners.
+\end{itemize}
+
+Full prompt source is in \filepath{prompts/recommender\_prompts.py}.
 
 
 % ---- B.4 Conflict Resolver Prompts ------------------------------------------
 \section{Conflict Resolver Prompts}
 \label{app:resolver-prompts}
 
-% TODO: CONFLICT_DETECTION_SYSTEM, NEGOTIATION_ARGUMENT_SYSTEM, MEDIATOR_SYSTEM
+The conflict resolution subsystem uses three prompt templates:
+\begin{enumerate}
+    \item \textbf{Conflict Detection:} Identifies overlapping patches by comparing target CSS selectors and patch types.
+    \item \textbf{Negotiation Argument:} Each competing agent submits a justification for its proposed patch.
+    \item \textbf{Mediator Assessment:} The mediator evaluates both arguments and outputs a resolution: chose Agent~A, chose Agent~B, merged, or unresolved.
+\end{enumerate}
 
 
 % ---- B.5 Verification Prompts -----------------------------------------------
 \section{Verification Prompts}
 \label{app:verification-prompts}
 
-% TODO: _VERIFICATION_SYSTEM, _VERIFICATION_USER from verification_loop.py
+The verification prompt instructs the model to evaluate whether each issue from the original diagnostic report has been resolved by the applied patches. For each issue, it outputs one of three statuses: \code{resolved}, \code{remaining}, or \code{new} (regression). The prompt provides both the original issue descriptions and the patched HTML source for comparison.

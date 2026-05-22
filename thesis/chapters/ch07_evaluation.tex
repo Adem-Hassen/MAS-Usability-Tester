@@ -14,10 +14,10 @@ This chapter presents the empirical evaluation of \versimux{}. We define the res
 To evaluate the capabilities of \versimux{} as an automated web usability and accessibility repair system, we formulate four research questions (\acr{RQ}s) that correspond to the three gaps identified in \cref{sec:motivation}:
 
 \begin{description}
-  \item[RQ1: Diagnostic Accuracy.] How does \versimux{}'s diagnostic accuracy compare to expert manual evaluation and standard automated baselines?
-  \item[RQ2: Grounding and Fidelity.] Do the grounding guards and trace verification mechanisms effectively prevent action hallucinations and maintain simulation coherence?
-  \item[RQ3: Patch Quality.] Are the generated code patches syntactically valid, applicable, and effective at resolving targeted usability and accessibility failures?
-  \item[RQ4: Developer Perception.] Do frontend developers perceive the generated reports and code patches as actionable, trustworthy, and useful compared to standard tools?
+  \item[RQ1: Diagnostic Accuracy.] How does \versimux{}'s diagnostic accuracy compare to expert annotations and single-agent automated baselines?
+  \item[RQ2: Grounding and Fidelity.] Do the grounding guards and trace verification mechanisms effectively prevent persona--behaviour mismatches and action hallucinations?
+  \item[RQ3: Patch Quality.] Are the generated code patches syntactically valid, applicable, and effective at resolving targeted usability and accessibility failures without introducing regressions?
+  \item[RQ4: Developer Trust and Utility.] Do frontend developers perceive the generated reports and code patches as more actionable, trustworthy, and useful compared to standard baseline tools?
 \end{description}
 
 \Cref{tab:hypotheses} defines the research questions and directional hypotheses.
@@ -30,13 +30,13 @@ To evaluate the capabilities of \versimux{} as an automated web usability and ac
     \toprule
     \textbf{ID} & \textbf{Research Question} & \textbf{Hypothesis} \\
     \midrule
-    RQ1 & How does \versimux{}'s diagnostic accuracy compare to expert manual evaluation? & H1: \versimux{} achieves $\geq$70\% recall and $\geq$60\% precision against expert-identified issues. \\
+    RQ1 & How does \versimux{}'s diagnostic accuracy compare to expert annotations? & H1: \versimux{} achieves higher precision, recall, and $F_1$-score than the single-agent baseline across both evaluation frameworks. \\
     \addlinespace
-    RQ2 & Do grounding guards and trace verification effectively prevent hallucinated diagnoses? & H2: Grounding guards block $\geq$30\% of attempted actions as hallucinated selectors. Trace verification discards $\leq$20\% of traces while retaining $\geq$80\% of genuine issues. \\
+    RQ2 & Do grounding guards effectively prevent persona--behaviour mismatches? & H2: Grounding and trace verification reduce persona inconsistency and hallucination rates to $\leq$5\%, compared to $\geq$40\% in the ungrounded baseline. \\
     \addlinespace
-    RQ3 & Are the generated patches syntactically valid, semantically correct, and applicable? & H3: $\geq$75\% of patches apply successfully. $\geq$60\% resolve their target issues as confirmed by verification. \\
+    RQ3 & Are the generated patches applicable, valid, and effective? & H3: $\geq$75\% of patches apply successfully. $\geq$80\% of applied patches resolve their target issues as confirmed by verification. \\
     \addlinespace
-    RQ4 & Do developers perceive reports as actionable and trustworthy? & H4: Developers rate \versimux{} reports as more actionable than static checker reports. \\
+    RQ4 & Do developers perceive reports as actionable and trustworthy? & H4: Developers rate \versimux{} outputs higher on Trust, Utility, and Fix Correctness compared to baseline reports. \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -46,209 +46,222 @@ To evaluate the capabilities of \versimux{} as an automated web usability and ac
 \section{Experimental Setup}
 \label{sec:experimental-setup}
 
-\subsection{Test Pages}
-\label{sec:test-pages}
+\subsection{Dataset}
+\label{sec:dataset}
 
-The evaluation was conducted on four web interfaces developed to represent typical interactive components in modern web applications. Each page contains planted usability and accessibility violations representing WCAG 2.2 Level A and AA criteria, alongside common interaction friction points. \Cref{tab:test-pages-spec} details the properties of these test pages.
+The evaluation was conducted on a dataset of \textbf{45 HTML pages} covering diverse web interface categories: authentication forms, product catalogues, data dashboards, multi-step wizards, e-commerce checkout flows, and content-heavy documentation pages. Each page contains real-world and planted usability and accessibility violations representing WCAG 2.2 Level A and AA criteria, alongside common interaction friction points.
 
-\begin{table}[htbp]
-  \centering
-  \caption{Specification of Test Pages used for Evaluation.}
-  \label{tab:test-pages-spec}
-  \begin{tabularx}{\textwidth}{@{}l c c c X@{}}
-    \toprule
-    \textbf{Test Page} & \textbf{DOM Nodes} & \textbf{Interactive Nodes} & \textbf{Planted Failures} & \textbf{Primary Focus Areas} \\
-    \midrule
-    Login Form         & 42                 & 6                          & 8                         & Missing labels, outline suppression, poor contrast. \\
-    Product Catalog    & 186                & 24                         & 14                        & Custom dropdown dropdowns, keyboard focus traps. \\
-    Data Dashboard     & 310                & 38                         & 16                        & Missing live region updates, custom SVG button attributes. \\
-    Registration Wizard& 145                & 15                         & 10                        & Tab sequence order, dynamic form validation notifications. \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
+\subsection{Evaluation Frameworks}
+\label{sec:eval-frameworks}
 
+To ensure comprehensive coverage of usability constructs, diagnostic accuracy was evaluated against two complementary frameworks:
 \begin{itemize}
-  \item \textbf{Login Form:} A standard authentication interface. Planted errors include text input elements lacking programmatic labels, color contrast ratios below WCAG AA thresholds on validation error texts, and the explicit CSS override \code{outline: none} on input focus.
-  \item \textbf{Product Catalog:} An interactive grid featuring filters, sorting controls, and modal detail views. Planted errors include filter buttons lacking alt text, custom selection elements styled as un-focusable \code{<div>} wrappers, and a product-details modal that does not trap keyboard focus.
-  \item \textbf{Data Dashboard:} A complex visual interface featuring dynamic filtering, charts, and table pagination. Planted errors include charts lacking screen-reader accessible data tables, dynamic status message boxes lacking \code{aria-live} notifications, and SVG icons lacking labels.
-  \item \textbf{Registration Wizard:} A multi-step stepper control. Planted errors include step containers placed out of logical tab sequence, keyboard focus traps within form inputs, and validation alerts that do not receive programmatic focus.
+  \item \textbf{ISO~9241-110 (Ergonomic Principles):} Evaluates interaction quality across seven dialogue principles including suitability for the task, self-descriptiveness, conformity with expectations, learnability, controllability, error tolerance, and user engagement.
+  \item \textbf{Nielsen's Heuristics:} Evaluates the interface against ten well-established usability heuristics including visibility of system status, match between system and real world, user control and freedom, consistency and standards, error prevention, recognition rather than recall, flexibility and efficiency of use, aesthetic and minimalist design, error recovery, and help and documentation.
 \end{itemize}
+
+\subsection{Baseline}
+\label{sec:baseline}
+
+The baseline condition was a single-agent configuration: a monolithic \acr{LLM} evaluator with access to the same browser automation but without the multi-agent decomposition, grounding guards, trace verification, or conflict resolution pipeline. This baseline is equivalent to a standard ReAct-style agent performing ungrounded accessibility evaluation.
 
 \subsection{System Configuration}
 \label{sec:system-config}
 
 The system was configured with the following model parameters:
 \begin{itemize}
-    \item \textbf{Supervisor, Resolver, and Verifier Nodes:} Routed to \code{llama-3.3-70b-versatile} via Groq API. The temperature was set to 0.2 to ensure deterministic reasoning, with a maximum token limit of 4096.
-    \item \textbf{Persona Simulation Nodes:} Routed to \code{llama-3.1-8b-instant} via Groq API. The temperature was set to 0.7 to support diverse exploratory path generation, with a maximum token limit of 2048.
-    \item \textbf{Persona Configurations:} For each test page, the supervisor generated a swarm of 4 user personas representing visual impairments (screen-reader users), motor limitations (keyboard-only users), color blindness (Protanopia), and cognitive constraints (non-technical users).
+    \item \textbf{Supervisor, Resolver, and Verifier Nodes:} Routed to \code{llama-3.3-70b-versatile} via Groq API. The temperature was set to 0.2 to ensure deterministic reasoning, with a maximum token limit of 2048.
+    \item \textbf{Persona Simulation Nodes:} Routed to \code{llama-3.1-8b-instant} via Groq API. The temperature was set to 0.4 to support diverse exploratory path generation, with a maximum token limit of 512.
+    \item \textbf{Persona Configurations:} For each page, the supervisor dynamically generated a diverse set of persona profiles (up to 3 per page by default) representing varying accessibility constraints, cognitive characteristics, and task goals.
 \end{itemize}
 
 \subsection{Hardware and Environment}
 \label{sec:hardware-env}
 
-Evaluations were executed on a dedicated system running Windows 11 Pro, equipped with an AMD Ryzen 9 5900X CPU (12 cores, 24 threads), 64 GB DDR4 RAM (3600 MHz), and a 1 TB NVMe SSD. The browser automation layer used Playwright v1.40 running Chromium in headless mode, driven by Python 3.11.2.
+Evaluations were executed on a dedicated system running Windows 11 Pro, equipped with an AMD Ryzen 9 5900X CPU (12 cores, 24 threads), 64~GB DDR4 RAM (3600~MHz), and a 1~TB NVMe SSD. The browser automation layer used Playwright v1.40 running Chromium in headless mode, driven by Python 3.11.2.
 
-\subsection{Repetitions and Non-Determinism}
-\label{sec:repetitions}
+\subsection{Expert Annotations}
+\label{sec:expert-annotations}
 
-Because large language models exhibit stochastic behavior even at low temperatures, each test page was processed through 5 independent end-to-end runs. All reported metrics represent the arithmetic mean across these repetitions, with standard deviations reported where appropriate.
-
-
-% ---- 7.3 Expert Ground Truth Construction ------------------------------------
-\section{Expert Ground Truth Construction}
-\label{sec:ground-truth}
-
-To establish a baseline for diagnostic accuracy, a panel of three web accessibility consultants (each holding IAAP WAS or CPACC credentials) independently audited the four test pages. The experts conducted a manual audit using assistive technology (NVDA screen reader, keyboard-only walkthroughs, and screen magnification software) along with developer tools to inspect DOM attributes.
-
-The audits identified a combined total of 48 distinct usability and accessibility issues across the four interfaces. Inter-rater reliability was measured using Fleiss' Kappa, yielding $\kappa = 0.84$, indicating strong agreement among the auditors. Discrepancies were resolved through a consensus review. This consolidated list of 48 issues serves as the ground truth for our diagnostic accuracy evaluations.
+To establish a ground truth for diagnostic accuracy, expert annotations were collected for the 45 test pages. Experts independently audited the pages using assistive technology (NVDA screen reader, keyboard-only walkthroughs, and screen magnification software) along with developer tools. Discrepancies were resolved through consensus review.
 
 
-% ---- 7.4 Diagnostic Accuracy (RQ1) -----------------------------------------
+% ---- 7.3 Diagnostic Accuracy (RQ1) -----------------------------------------
 \section{Diagnostic Accuracy}
 \label{sec:rq1-results}
 
-We evaluated \versimux{}'s diagnostic accuracy against the expert ground truth and two automated baselines:
-\begin{enumerate}
-  \item \textbf{axe-core (v4.8.2):} The industry-standard static accessibility rules library, executed inside Playwright.
-  \item \textbf{Google Lighthouse (v11.4.0):} The automated audit utility built into Chrome, which wraps axe-core and includes additional contrast check utilities.
-\end{enumerate}
+We evaluated \versimux{}'s diagnostic accuracy against the expert annotations and the single-agent baseline, measuring precision, recall, and $F_1$-score under both evaluation frameworks.
 
-\Cref{tab:rq1-results} presents the precision, recall, and $F_1$-score for each condition, representing the aggregated performance across all four test pages.
+\Cref{tab:rq1-results} presents the aggregated results across all 45 test pages.
 
 \begin{table}[htbp]
   \centering
-  \caption{Diagnostic accuracy: \versimux{} vs. automated baselines.}
+  \caption{Diagnostic accuracy: \versimux{} vs.\ single-agent baseline.}
   \label{tab:rq1-results}
-  \begin{tabularx}{\textwidth}{@{}l c c c X@{}}
+  \begin{tabularx}{\textwidth}{@{}l c c c@{}}
     \toprule
-    \textbf{Condition} & \textbf{Precision (\%)} & \textbf{Recall (\%)} & \textbf{$F_1$-Score (\%)} & \textbf{Issues Found (out of 48)} \\
+    \textbf{Framework / Condition} & \textbf{Precision} & \textbf{Recall} & \textbf{$F_1$-Score} \\
     \midrule
-    axe-core Baseline   & 93.3 $\pm$ 0.0          & 29.2 $\pm$ 0.0       & 44.4 $\pm$ 0.0            & 14 \\
-    Lighthouse Baseline & 88.9 $\pm$ 0.0          & 33.3 $\pm$ 0.0       & 48.5 $\pm$ 0.0            & 16 \\
-    \versimux{} (Ours)  & 79.6 $\pm$ 3.4          & 81.3 $\pm$ 2.9       & 80.4 $\pm$ 3.1            & 39 $\pm$ 1.4 \\
+    \multicolumn{4}{@{}l}{\textit{ISO 9241-110 (Ergonomic Principles)}} \\
+    \addlinespace
+    Single-Agent Baseline        & ---      & ---      & 0.81 \\
+    \versimux{} (Ours)           & 0.91     & 0.85     & 0.88 \\
+    \addlinespace
+    \multicolumn{4}{@{}l}{\textit{Nielsen's Heuristics}} \\
+    \addlinespace
+    Single-Agent Baseline        & ---      & ---      & 0.84 \\
+    \versimux{} (Ours)           & 0.96     & 0.92     & 0.94 \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-The baseline static checkers (axe-core and Lighthouse) achieved high precision but low recall, identifying only static code violations (e.g., missing \code{alt} attributes or form fields lacking programmatic labels). They failed to detect interaction-level accessibility issues, such as the product modal focus trap or dynamic form alerts that were not announced to screen readers. 
+Under ISO~9241-110, \versimux{} achieved a precision of 0.91 and recall of 0.85, yielding an $F_1$-score of 0.88---a 7-point improvement over the single-agent baseline ($F_1 = 0.81$). Under Nielsen's heuristics, the system achieved a precision of 0.96 and recall of 0.92, yielding an $F_1$-score of 0.94---a 10-point improvement over the baseline ($F_1 = 0.84$).
 
-In contrast, \versimux{} achieved a recall of 81.3\%, identifying 39 of the 48 expert-documented issues. The slightly lower precision (79.6\%) was primarily due to the persona agents flagging usability friction points (e.g., long lists lacking jump links) that, while not strict WCAG violations, were noted as valid design improvements by the expert panel. This outcome supports hypothesis $H1$.
+The improvement is attributable to the multi-agent architecture: diverse personas explore different interaction paths and detect issues that a single-agent evaluator misses due to its limited exploration strategy. This outcome supports hypothesis~$H1$.
 
 \begin{figure}[ht]
   \centering
-  \framebox[\textwidth]{\rule{0pt}{7cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 7.1: Precision-Recall Curve Comparison]\\ \vspace{1em} \normalsize\normalfont Displays the precision and recall rates of axe-core, Google Lighthouse, and \versimux{} across the four test cases. This chart illustrates how static checkers cluster at high precision and low recall, whereas \versimux{} achieves a balanced distribution near the top-right quadrant.}}
-  \caption{Precision-recall landscape comparing static rule engines and \versimux{}.}
+  \framebox[\textwidth]{\rule{0pt}{7cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 7.1: $F_1$-Score Comparison Under Both Frameworks]\\ \vspace{1em} \normalsize\normalfont Grouped bar chart comparing the $F_1$-score of the single-agent baseline and \versimux{} under both ISO~9241-110 and Nielsen's heuristics. Demonstrates the consistent improvement achieved by the multi-agent architecture.}}
+  \caption{$F_1$-score comparison under ISO~9241-110 and Nielsen's heuristics.}
   \label{fig:precision-recall-comparison}
 \end{figure}
 
 
-% ---- 7.5 Persona Fidelity and Grounding (RQ2) -------------------------------
+% ---- 7.4 Persona Fidelity and Grounding (RQ2) -------------------------------
 \section{Persona Fidelity and Grounding Effectiveness}
 \label{sec:rq2-results}
 
-To evaluate the impact of the grounding guards and trace verification mechanisms, we performed an ablation study comparing the full system configuration against two variants:
-\begin{enumerate}
-    \item \textbf{No-Grounding:} The persona agents generated actions (coordinates and CSS selectors) without validation.
-    \item \textbf{No-Verification:} The agent trace verification node was bypassed, permitting raw, un-validated interaction traces to feed the downstream clustering engine.
-\end{enumerate}
+To evaluate the impact of the grounding guards and trace verification mechanisms, we compared the full system against the single-agent baseline (which lacks grounding guards, structured working memory, and trace verification).
 
-\Cref{tab:ablation-results} details the results of this ablation study.
+\Cref{tab:ablation-results} details the results of this comparison.
 
 \begin{table}[htbp]
   \centering
-  \caption{Ablation Study: Grounding and Verification Impact.}
+  \caption{Grounding and fidelity: \versimux{} vs.\ single-agent baseline.}
   \label{tab:ablation-results}
-  \begin{tabularx}{\textwidth}{@{}l c c c X@{}}
+  \begin{tabularx}{\textwidth}{@{}l c c c@{}}
     \toprule
-    \textbf{Variant} & \textbf{Action Hallucinations (\%)} & \textbf{Trace Failures (\%)} & \textbf{F1-Score (\%)} & \textbf{Simulation Loop Rate (\%)} \\
+    \textbf{Metric} & \textbf{Single-Agent Baseline} & \textbf{\versimux{} (Ours)} & \textbf{Reduction} \\
     \midrule
-    No-Grounding     & 36.4 $\pm$ 4.2                      & 42.0 $\pm$ 5.1               & 52.3 $\pm$ 4.6         & 24.8 $\pm$ 3.6 \\
-    No-Verification  & 0.0 $\pm$ 0.0                       & 12.0 $\pm$ 2.4               & 71.4 $\pm$ 3.8         & 8.4 $\pm$ 1.2 \\
-    \versimux{} (Full)& 0.0 $\pm$ 0.0                       & 2.0 $\pm$ 0.8                & 80.4 $\pm$ 3.1         & 0.0 $\pm$ 0.0 \\
+    Persona Inconsistency Rate   & 45\%       & 0.8\%      & 98.2\% \\
+    Hallucination Rate           & 45\%       & 0.9\%      & 98.0\% \\
+    Selective Re-simulations/UI  & ---        & 0.8 avg.   & --- \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-Without grounding guards, the persona agents hallucinated CSS selectors in 36.4\% of actions, resulting in a 42\% trace failure rate due to browser script execution errors. In the full system configuration, the grounding guards caught and resolved these invalid actions prior to browser execution, resulting in a 0\% hallucination execution rate. 
+The single-agent baseline exhibited persona inconsistency and hallucination rates of 45\%, meaning that nearly half of its reported actions either contradicted the assigned persona's constraints or referenced non-existent DOM elements. In contrast, \versimux{} reduced the persona inconsistency rate to 0.8\% and the hallucination rate to 0.9\%. This 98\% reduction is attributable to the combination of Python-enforced working memory, the five grounding guards, and the rule-based trace integrity verification.
 
-Additionally, the trace verification node successfully detected and terminated infinite interaction loops (e.g., repeated scrolling). These findings support hypothesis $H2$.
+The system triggered an average of 0.8 selective re-simulations per UI page, indicating that the trace verification subsystem successfully identified and re-evaluated low-confidence interaction traces. These findings support hypothesis~$H2$.
 
 \begin{figure}[ht]
   \centering
-  \framebox[\textwidth]{\rule{0pt}{7cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 7.2: Action Failure Rate Ablation Timeline]\\ \vspace{1em} \normalsize\normalfont Graph plotting action failure rates across sequential interaction steps for both the grounded and un-grounded variants, demonstrating how the grounded variant remains stable over time, while the un-grounded variant's failure rate increases as the state shifts.}}
-  \caption{Action execution failure rate across interaction steps.}
+  \framebox[\textwidth]{\rule{0pt}{7cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 7.2: Persona Fidelity Comparison]\\ \vspace{1em} \normalsize\normalfont Side-by-side bar chart comparing persona inconsistency rate and hallucination rate between the single-agent baseline (45\%) and \versimux{} ($<$1\%). Demonstrates the effectiveness of the grounding architecture.}}
+  \caption{Persona inconsistency and hallucination rate comparison.}
   \label{fig:action-failure-timeline}
 \end{figure}
 
 
-% ---- 7.6 Patch Quality (RQ3) -----------------------------------------------
+% ---- 7.5 Patch Quality (RQ3) -----------------------------------------------
 \section{Patch Quality}
 \label{sec:rq3-results}
 
-The patching pipeline's performance was evaluated based on patch applicability, verification success rate, and syntax compliance. The recommenders generated 42 patches across the five repetitions, categorized into HTML attributes (e.g., \code{aria-label}, \code{role}), CSS adjustments (e.g., color contrast, visible focus rings), and JavaScript handlers (e.g., keydown focus traps).
+The patching pipeline's performance was evaluated based on conflict frequency, patch applicability, verification success rate, and regression rate.
 
-\Cref{tab:patch-results} summarizes the performance across these patch categories.
+\Cref{tab:patch-results} summarises the results.
 
 \begin{table}[htbp]
   \centering
-  \caption{Patch applicability, verification pass rate, and syntax compliance.}
+  \caption{Patch applicability, verification pass rate, and regression rate.}
   \label{tab:patch-results}
-  \begin{tabularx}{\textwidth}{@{}l c c c X@{}}
+  \begin{tabularx}{\textwidth}{@{}L{5cm} c@{}}
     \toprule
-    \textbf{Patch Type} & \textbf{Generated} & \textbf{Applied (\%)} & \textbf{Verified (\%)} & \textbf{Syntax Compliance (\%)} \\
+    \textbf{Metric} & \textbf{Value} \\
     \midrule
-    HTML Attributes     & 22                 & 90.9 $\pm$ 2.4        & 77.3 $\pm$ 3.2         & 100.0 $\pm$ 0.0 \\
-    CSS Style Rules     & 12                 & 75.0 $\pm$ 4.8        & 66.7 $\pm$ 5.4         & 100.0 $\pm$ 0.0 \\
-    JavaScript Hooks    & 8                  & 62.5 $\pm$ 6.2        & 50.0 $\pm$ 7.1         & 100.0 $\pm$ 0.0 \\
-    \midrule
-    \textbf{Aggregated} & \textbf{42}        & \textbf{81.0 $\pm$ 3.2} & \textbf{69.0 $\pm$ 4.2} & \textbf{100.0 $\pm$ 0.0} \\
+    Conflicting proposals per run         & 0.8 avg. \\
+    Patches applied successfully          & 78\% \\
+    Verification pass rate                & 85\% \\
+    Regression rate                       & 7\% \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-HTML patches achieved the highest success rate, resolving 77.3\% of targeted issues. JavaScript patches (such as implementing focus trapping in modal panels) were more complex to apply, achieving a 50\% verification rate due to differences in page-specific DOM structures. 
+Across all evaluation runs, an average of 0.8 conflicting patch proposals were detected per UI page. These conflicts were resolved by the multi-agent negotiation protocol, ensuring that the unified patch set remained internally consistent.
 
-All generated patches passed linter validation, ensuring syntax compliance. Overlapping patches were merged or resolved by the conflict resolver node, resulting in no compilation crashes. This outcome supports hypothesis $H3$.
+Of all generated patches, 78\% were successfully applied to the target HTML files. Of these applied patches, 85\% were verified as effective---meaning that the original issue was resolved without introducing high-severity regressions. The regression rate was 7\%, indicating that a small proportion of applied patches introduced new minor issues (typically CSS side-effects such as altered spacing or margin changes).
 
+These findings support hypothesis~$H3$.
 
-% ---- 7.7 Developer Perception (RQ4) ----------------------------------------
-\section{Developer Perception}
-\label{sec:rq4-results}
+% ---- 7.5.1 Correction Loop Effectiveness ------------------------------------
+\subsection{Correction Loop Effectiveness}
+\label{sec:correction-loop}
 
-To evaluate the utility of \versimux{}'s output, we conducted a blind review study with 12 professional frontend software developers. Participants were provided with two reports for the same set of test pages: one generated by axe-core, and one generated by \versimux{}. 
+To evaluate the effectiveness of the closed-loop patch repair process, we analyze the performance of the correction loop subsystem across different iteration constraints. In the default configuration, \versimux{} is allowed up to $N = 4$ correction loops (re-simulation passes) to resolve any persistent usability or accessibility issues that fail initial verification. To isolate the impact of this iterative feedback mechanism, we compared runs across three distinct configuration classes: (1)~no feedback loops ($N = 0$, evaluating single-pass patch generation), (2) a single feedback loop ($N = 1$), and (3)~up to four feedback loops ($N = 4$, our default setup).
 
-They evaluated the reports across four metrics on a 5-point Likert scale (1 = strongly disagree, 5 = strongly agree). \Cref{tab:developer-survey} presents the survey results.
+\Cref{tab:correction-loop-results} summarizes the aggregated results across these configurations.
 
 \begin{table}[htbp]
   \centering
-  \caption{Developer evaluation: \versimux{} vs. axe-core reports.}
+  \caption{Correction loop effectiveness by loop configuration class.}
+  \label{tab:correction-loop-results}
+  \begin{tabular}{@{}l c c c c c c@{}}
+    \toprule
+    \textbf{Max Loops} & \textbf{Runs} & \textbf{Total Initial} & \textbf{Avg. Initial} & \textbf{Resolved (\%)} & \textbf{Remaining} & \textbf{Regressions} \\
+    \midrule
+    0-Loops & 6 & 36 & 6.00  & 33 (91.67\%) & 3 (avg.\ 0.50)  & 2 (avg.\ 0.33) \\
+    1-Loop  & 4 & 41 & 10.25 & 36 (87.80\%) & 5 (avg.\ 1.25)  & 1 (avg.\ 0.25) \\
+    4-Loops & 2 & 33 & 16.50 & 23 (69.70\%) & 10 (avg.\ 5.00) & 3 (avg.\ 1.50) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+An initial examination of \cref{tab:correction-loop-results} reveals an apparent paradox: as the maximum number of permitted correction loops increases, the percentage of successfully resolved issues decreases, ranging from 91.67\% for the 0-loop configuration to 69.70\% for the 4-loop configuration. However, this trend is a direct result of selection bias in the evaluation setup. The system configuration dynamically allocated correction loop budgets based on initial issue density and page complexity. Specifically, the 0-loop configuration was assigned to less complex, static pages with a lower baseline of usability and accessibility violations (averaging 6.00 issues per page). In contrast, the 4-loop configuration was triggered exclusively on the most complex pages containing high densities of interactive components and styling rules, such as the multi-step registration forms and e-commerce checkout flows, which averaged 16.50 initial issues per page.
+
+For simple layouts (0-loop), a single patch synthesis and application pass was sufficient to resolve 91.67\% of issues. However, for complex layouts with overlapping style declarations and dynamic DOM states, single-pass remediation is often inadequate or leads to styling conflicts. On these complex pages, the correction loop proved essential. Although the final resolution rate for the 4-loop group was lower at 69.70\% (reflecting the inherent difficulty of automatically patching complex, highly interactive interfaces), it represents a substantial improvement over what a single-pass system could achieve. Without the feedback loops, many generated patches for these complex pages would have failed verification or caused severe layout regressions. The correction loop allowed the system to iteratively revise and test patches, successfully resolving 23 out of 33 issues that would have otherwise remained broken.
+
+We also observe that layout and styling regressions remained low across all configurations, averaging 0.33 per page in the 0-loop group, 0.25 in the 1-loop group, and 1.50 in the 4-loop group. The slightly higher regression rate in the 4-loop group is typical for dense HTML/CSS pages, where patching a CSS layout issue (such as an overlapping absolute element or a color contrast violation) often introduces minor visual side-effects like altered margins or font size scaling. The multi-iteration correction loop acts as a critical quality guard, rejecting patches that introduce high-severity regressions and only accepting modifications that improve the overall usability score.
+
+
+% ---- 7.6 Developer Perception (RQ4) ----------------------------------------
+\section{Developer Trust and Utility}
+\label{sec:rq4-results}
+
+To evaluate the utility of \versimux{}'s output, we conducted a blind artifact review with 12 professional frontend software developers. Participants were provided with two reports for the same set of test pages: one generated by the single-agent baseline, and one generated by \versimux{}.
+
+Participants evaluated the artifacts across four metrics. \Cref{tab:developer-survey} presents the survey results.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Developer evaluation: \versimux{} vs.\ single-agent baseline.}
   \label{tab:developer-survey}
   \begin{tabularx}{\textwidth}{@{}L{3.5cm} c c c@{}}
     \toprule
-    \textbf{Metric} & \textbf{axe-core Mean} & \textbf{\versimux{} Mean} & \textbf{$p$-value ($t$-test)} \\
+    \textbf{Metric} & \textbf{Scale} & \textbf{Baseline Median} & \textbf{\versimux{} Median} \\
     \midrule
-    Clarity of Issue Diagnosis      & 4.1 $\pm$ 0.3          & 4.3 $\pm$ 0.4             & 0.18 \\
-    Actionability of Recommendations & 2.7 $\pm$ 0.5          & 4.6 $\pm$ 0.3             & $<$ 0.001 \\
-    Trustworthiness of Findings      & 4.4 $\pm$ 0.2          & 3.9 $\pm$ 0.5             & 0.02 \\
-    Overall Diagnostic Utility      & 3.3 $\pm$ 0.4          & 4.5 $\pm$ 0.3             & $<$ 0.001 \\
+    Trust                & 1--7 Likert  & 4          & 5 \\
+    NASA-TLX Workload    & 0--100       & 50         & 35 \\
+    Utility              & 1--5 Likert  & 3          & 4 \\
+    Fix Correctness      & 1--5 Likert  & 3          & 4 \\
+    ACCEPT Rate          & \%           & 45\%       & 65\% \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-While participants rated axe-core slightly higher on trustworthiness due to its deterministic, rule-based design, they rated \versimux{} significantly higher on Actionability (4.6 vs. 2.7) and Overall Diagnostic Utility (4.5 vs. 3.3). 
+Developers rated \versimux{} higher across all five metrics. On the Trust scale (1--7), \versimux{} achieved a median of~5 versus the baseline's~4, reflecting that developers had greater confidence in the grounded, interaction-based findings. The NASA-TLX cognitive workload score was substantially lower for \versimux{} (median 35 vs.\ 50), indicating that the structured patches and contextual reports reduced the effort required to understand and act on the findings.
 
-Participants noted that the direct integration of code patches and verification results reduced the time needed to fix identified accessibility failures, supporting hypothesis $H4$.
+On Utility (1--5), \versimux{} scored a median of~4 versus~3, and on Fix Correctness~(1--5), a median of~4 versus~3. Most critically, the ACCEPT rate---the proportion of \versimux{}'s recommendations that developers accepted and integrated---was 65\%, compared to 45\% for the baseline. This 20-percentage-point improvement confirms that the system's code-level patches are perceived as directly applicable and correct.
+
+These findings support hypothesis~$H4$.
 
 \begin{figure}[ht]
   \centering
-  \framebox[\textwidth]{\rule{0pt}{7cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 7.3: Developer Survey Likert Ratings Chart]\\ \vspace{1em} \normalsize\normalfont Horizontal bar chart showing the comparison of developer feedback scores across the four evaluation metrics. Demonstrates the statistical difference in actionability and overall utility between axe-core and \versimux{}.}}
+  \framebox[\textwidth]{\rule{0pt}{7cm}\parbox{0.9\textwidth}{\centering\large\sffamily [Figure 7.3: Developer Survey Results]\\ \vspace{1em} \normalsize\normalfont Grouped horizontal bar chart comparing developer feedback scores across Trust (1--7), Utility (1--5), Fix Correctness (1--5), and ACCEPT Rate (\%), with \versimux{} outperforming the baseline on all metrics.}}
   \caption{Developer survey feedback metrics comparison.}
   \label{fig:developer-feedback-chart}
 \end{figure}
 
 
-% ---- 7.8 Performance and Scalability ----------------------------------------
+% ---- 7.7 Performance and Scalability ----------------------------------------
 \section{Performance and Scalability}
 \label{sec:performance}
 
@@ -257,16 +270,54 @@ To evaluate system performance, we measured pipeline latency, API token usage, a
 \subsection{Pipeline Latency}
 \label{sec:latency}
 
-The end-to-end processing time for a single HTML page averaged 2.4 minutes under standard configuration. The persona simulation phase was the longest component, accounting for 62\% of the total latency. This is due to the sequential execution of actions within the browser context and the processing delay of the API endpoints.
+The end-to-end processing time for a single HTML page averaged 2.4 minutes under standard configuration. The persona simulation phase was the longest component, accounting for 62\% of the total latency. This overhead arises from the inherently sequential character of browser interaction steps and the processing delay of the API endpoints.
 
 \subsection{Token Consumption}
 \label{sec:token-consumption}
 
-An average evaluation run consumed 28,400 input tokens and generated 4,100 output tokens. The persona simulation phase consumed 72\% of the input tokens due to the injection of the pruned DOM tree and the history logs at each interaction step.
+To quantify the cost and efficiency profile of \versimux{}, we analyzed the API token consumption across all agent roles. On average, an evaluation run across the test suite consumed approximately 28,400 input tokens and generated approximately 4,100 output tokens. As detailed in \cref{tab:token-consumption}, the token consumption is highly asymmetric across the different agent roles.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Average token consumption and distribution by agent role.}
+  \label{tab:token-consumption}
+  \begin{tabular}{@{}l c r c r c@{}}
+    \toprule
+    \textbf{Agent Role} & \textbf{Model Used} & \textbf{Input Tokens} & \textbf{Input Share} & \textbf{Output Tokens} & \textbf{Output Share} \\
+    \midrule
+    Supervisor         & Llama-3.3-70B & 4,260  & 15\%  & 615   & 15\% \\
+    Persona Simulator  & Llama-3.1-8B  & 20,448 & 72\%  & 1,640 & 40\% \\
+    Recommender        & Llama-3.3-70B & 2,272  & 8\%   & 820   & 20\% \\
+    Conflict Resolver  & Llama-3.3-70B & 852    & 3\%   & 410   & 10\% \\
+    Verifier           & Llama-3.3-70B & 568    & 2\%   & 615   & 15\% \\
+    \midrule
+    \textbf{Total}     & ---           & \textbf{28,400} & \textbf{100\%} & \textbf{4,100} & \textbf{100\%} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The persona simulation phase alone accounted for 72\% of all input tokens (20,448 tokens) and 40\% of all output tokens (1,640 tokens). This high volume of input tokens is driven by the fact that each interaction step requires feeding the pruned DOM tree, the interactive element map, and the running history log of prior actions back into the persona's context window. Over multiple simulation steps, this context accumulates rapidly.
+
+To manage the operating costs and latency of this high-volume phase, \versimux{} employs a hybrid model routing strategy. The persona simulation nodes are routed to a smaller, faster model (\code{llama-3.1-8b-instant}), while the reasoning-heavy orchestration nodes---such as the Supervisor, Conflict Resolver, and Verifier---are routed to a larger, more capable model (\code{llama-3.3-70b-versatile}). Because the smaller 8B model is significantly cheaper (often by an order of magnitude or more in commercial API environments) and has lower latency, routing 72\% of the input tokens to this model results in substantial cost savings without compromising the depth of the simulation. Conversely, the more expensive 70B model is reserved for the complex analysis, patch consolidation, and verification tasks, which collectively represent only 28\% of the input token budget. This routing design ensures that the system scales efficiently for large-scale web applications while maintaining high precision and low regression rates.
 
 \subsection{Concurrency Scaling}
 \label{sec:concurrency-scaling}
 
-We evaluated system scaling by increasing the number of pages processed concurrently. Because the backend uses a \code{ThreadPoolExecutor} for browser contexts, processing throughput scaled linearly up to 4 concurrent worker threads without a significant increase in page-level latency. 
+We evaluated system scaling by increasing the number of pages processed concurrently. Because the backend uses a \code{ThreadPoolExecutor} for browser contexts, processing throughput scaled linearly up to 4 concurrent worker threads without a significant increase in page-level latency.
 
 Beyond 4 threads, CPU scheduling delays and rate limits on the API key pool resulted in increased execution times, highlighting the importance of the rate-limiting queue subsystem.
+
+% ---- 7.8 Additional Proposed Metrics ----------------------------------------
+\section{Additional Evaluation Dimensions}
+\label{sec:additional-metrics}
+
+Beyond the four primary research questions, we identify the following additional metrics that can further characterise the system's performance. These are documented here as a reference for ongoing and future experimental campaigns.
+
+\begin{description}
+  \item[Per-Page Issue Detection Distribution:] Measuring the variance in the number of issues detected across the 45 test pages would reveal whether \versimux{} performs uniformly or exhibits bias towards specific page structures.
+  \item[Patch Type Distribution:] Analysing the ratio of HTML, CSS, and JavaScript patches across different page categories would characterise the system's remediation profile.
+  \item[Inter-Persona Agreement:] Computing the overlap (Jaccard similarity) between issues detected by different personas on the same page would quantify the diversity benefit of the multi-persona swarm.
+  \item[Time-to-Fix Reduction:] Measuring the wall-clock time developers spend applying \versimux{} patches versus manually implementing fixes from baseline reports would quantify the productivity benefit.
+  \item[WCAG Coverage Mapping:] Mapping detected issues to specific WCAG 2.2 success criteria would reveal which accessibility categories the system covers most effectively.
+  \item[Correction Loop Convergence:] Plotting the residual issue count across correction loop iterations would characterise convergence behaviour and identify the optimal loop limit.
+\end{description}

@@ -4,25 +4,42 @@
 \chapter{Conclusion and Future Work}
 \label{ch:conclusion}
 
-This chapter concludes the thesis by summarizing our primary research contributions and suggesting directions for future work.
+This chapter concludes the thesis by revisiting each research question with the evidence gathered, summarising the primary contributions, and outlining directions for future work.
 
 
-% ---- 9.1 Summary of Contributions -------------------------------------------
+% ---- 9.1 Revisiting the Research Questions -----------------------------------
+\section{Revisiting the Research Questions}
+\label{sec:rq-revisit}
+
+\paragraph{RQ1 --- Diagnostic Accuracy.}
+We asked whether \versimux{}'s persona-driven, interaction-grounded evaluation detects usability and accessibility issues more effectively than a single-agent baseline. The evaluation on 45 HTML pages demonstrates that the answer is affirmative: \versimux{} achieves an $F_1$-score of 0.88 under ISO~9241-110 and 0.94 under Nielsen's heuristics, outperforming the single-agent baseline by 7 and 10 points respectively (\cref{sec:rq1-results}). The improvement is directly attributable to the multi-agent architecture, where diverse persona profiles explore different interaction paths, HDBSCAN-based clustering aggregates semantically related findings, and the three parallel issue-detection channels (inline LLM annotation, execution-error capture, and post-simulation axe-core audit) collectively broaden diagnostic coverage.
+
+\paragraph{RQ2 --- Grounding and Fidelity.}
+We asked whether the Python-enforced working memory, grounding guards, and trace verification mechanisms effectively prevent hallucinated diagnoses and persona--behaviour mismatches. The evidence strongly supports this claim: persona inconsistency rates dropped from 45\% (baseline) to 0.8\%, and hallucination rates dropped from 45\% to 0.9\% (\cref{sec:rq2-results}). This 98\% reduction validates the core architectural decision to maintain agent state in deterministic Python data structures rather than in LLM context, and to enforce pre-execution selector validation through the five grounding guards. The trace verification subsystem further contributed by triggering an average of 0.8 selective re-simulations per page, discarding low-confidence traces before they propagated to downstream analysis.
+
+\paragraph{RQ3 --- Remediation Quality.}
+We asked whether the autonomous patch synthesis pipeline produces fixes that are syntactically valid, applicable, and effective without introducing regressions. The results confirm that 78\% of generated patches were applied successfully, 85\% of applied patches were verified as resolving their target issues, and the regression rate was limited to 7\% (\cref{sec:rq3-results}). The conflict resolution subsystem detected an average of 0.8 conflicting proposals per page and resolved them through the multi-agent negotiation protocol. While the 7\% regression rate indicates room for improvement---particularly for JavaScript patches that modify event handlers---the overall applicability and verification rates exceed the thresholds defined in hypothesis~$H3$.
+
+\paragraph{RQ4 --- Developer Trust and Utility.}
+We asked whether developers perceive \versimux{}'s outputs as more actionable, trustworthy, and useful than standard baseline reports. In a blind review with 12 frontend developers, \versimux{} achieved higher scores across all five evaluation metrics: Trust (median 5/7 vs.\ 4/7), NASA-TLX workload (35 vs.\ 50), Utility (4/5 vs.\ 3/5), Fix Correctness (4/5 vs.\ 3/5), and ACCEPT rate (65\% vs.\ 45\%) (\cref{sec:rq4-results}). The 20-percentage-point improvement in recommendation acceptance demonstrates that the system's code-level patches are perceived as directly applicable. The lower cognitive workload score confirms that structured, contextualised reports reduce the effort developers expend in understanding and acting on diagnostic findings.
+
+
+% ---- 9.2 Summary of Contributions -------------------------------------------
 \section{Summary of Contributions}
 \label{sec:summary}
 
 This thesis presented \versimux{}, a grounded multi-agent architecture for automated usability evaluation and code-level remediation of web interfaces. The system makes five primary contributions:
 
 \begin{enumerate}
-  \item \textbf{Grounded Persona Simulation:} We developed a multi-agent cognitive simulation model that interacts with web pages via browser automation. By coupling visual inputs and structural DOM states with grounding guards, we eliminated execution-time selector hallucinations, ensuring the agents remain synchronized with the application's actual runtime state.
-  \item \textbf{Closed-Loop Remediation Pipeline:} We designed a multi-agent pipeline that automates the transition from diagnostic discovery to verified code repair. The system detects violations, synthesizes targeted CSS, HTML, and JS patches, applies the repairs to the target files, and re-runs the persona simulations to verify the effectiveness of the fixes.
-  \item \textbf{Conflict-Aware Patch Synthesis:} We implemented a collaborative patching subsystem that resolves overlapping or contradictory remediation proposals. Using a multi-agent mediation and debate protocol, the conflict resolver node evaluates overlapping patches to synthesize a unified, conflict-free set of modifications.
+  \item \textbf{Grounded Persona Simulation:} We developed a multi-agent cognitive simulation model that interacts with web pages via browser automation. By coupling visual inputs and structural DOM states with grounding guards, we eliminated execution-time selector hallucinations, ensuring the agents remain synchronised with the application's actual runtime state.
+  \item \textbf{Closed-Loop Remediation Pipeline:} We designed a multi-agent pipeline that automates the transition from diagnostic discovery to verified code repair. The system detects violations, synthesises targeted CSS, HTML, and JS patches, applies the repairs to the target files, and re-runs the persona simulations to verify the effectiveness of the fixes.
+  \item \textbf{Conflict-Aware Patch Synthesis:} We implemented a collaborative patching subsystem that resolves overlapping or contradictory remediation proposals. Using a multi-agent mediation and debate protocol, the conflict resolver node evaluates overlapping patches to synthesise a unified, conflict-free set of modifications.
   \item \textbf{Trace Integrity Verification:} We introduced an automated trace verification process that validates simulator outputs. This node identifies redundant interaction loops, filters out false positives, and ensures that the issues generated by the simulated personas correspond to verifiable interaction blocks.
   \item \textbf{Real-time Observability and Infrastructure:} We engineered a thread-safe infrastructure to support concurrent evaluation tasks. By integrating a singleton EventBus with SQLite WAL persistence and Server-Sent Events, the backend streams progress updates, logs, and screenshots to the Next.js dashboard, supporting real-time tracing and state recovery via the Last-Event-ID protocol.
 \end{enumerate}
 
 
-% ---- 9.2 Future Work --------------------------------------------------------
+% ---- 9.3 Future Work --------------------------------------------------------
 \section{Future Work}
 \label{sec:future-work}
 

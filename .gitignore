@@ -13,7 +13,8 @@ frontend/.next
 frontend/.env.local
 # Outputs folder
 outputs/
-
+docs/
+scratch/
 # VS Code settings (optional but recommended)
 .vscode/
 
