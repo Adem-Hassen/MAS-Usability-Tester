@@ -528,6 +528,24 @@ Style: standard UML sequence diagram, flat vector, alternating message colours, 
 
 ---
 
+### Figure 6.3 — Nexus Dashboard Layout
+**Label:** `fig:frontend-dashboard`
+**Caption:** The Next.js dashboard interface showing the three-panel layout, the live preview grid with bounding box overlays, and real-time execution logs.
+
+**Source of Image:**
+Take a screenshot of the actual Next.js application during an active evaluation run showing the three columns/panels (Pipeline Rail on the left, Live Preview cards in the center, and the tabbed outputs on the right). Save this image as `static/ch06_dashboard.png` in the thesis directory.
+
+---
+
+### Figure 6.4 — Interactive Code-Diff Viewer
+**Label:** `fig:frontend-diff`
+**Caption:** The interactive side-by-side diff viewer highlighting code remediation patches and conflict resolution changes.
+
+**Source of Image:**
+Take a screenshot of the Next.js application highlighting a patch recommendation in the Diff Viewer tab of the right panel, showing the side-by-side or unified Myers diff with line additions (green) and deletions (red). Save this image as `static/ch06_diff_viewer.png` in the thesis directory.
+
+---
+
 ## Chapter 7: Evaluation
 
 ### Figure 7.1 — F₁-Score Comparison
@@ -700,7 +718,7 @@ These are best rendered as **actual formatted JSON in LaTeX lstlisting blocks** 
 | Ch 3 | 2 | draw.io / Excalidraw (architecture diagrams) |
 | Ch 4 | 8 | draw.io / Mermaid (flowcharts, DAGs, swimlanes) |
 | Ch 5 | 2 | draw.io / Excalidraw (block diagrams, trees) |
-| Ch 6 | 2 | draw.io / Mermaid (architecture, sequence diagram) |
+| Ch 6 | 4 | 2x draw.io/Mermaid (architecture, sequence), 2x Real Screenshots |
 | Ch 7 | 3 | Python matplotlib / seaborn (charts with real data) |
 | App D | 7 | LaTeX lstlisting (formatted JSON code blocks) |
-| **Total** | **27** | |
+| **Total** | **29** | |

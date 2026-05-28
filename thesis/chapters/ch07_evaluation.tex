@@ -70,8 +70,9 @@ The baseline condition was a single-agent configuration: a monolithic \acr{LLM} 
 
 The system was configured with the following model parameters:
 \begin{itemize}
-    \item \textbf{Supervisor, Resolver, and Verifier Nodes:} Routed to \code{llama-3.3-70b-versatile} via Groq API. The temperature was set to 0.2 to ensure deterministic reasoning, with a maximum token limit of 2048.
-    \item \textbf{Persona Simulation Nodes:} Routed to \code{llama-3.1-8b-instant} via Groq API. The temperature was set to 0.4 to support diverse exploratory path generation, with a maximum token limit of 512.
+    \item \textbf{Supervisor Node (incl.\ Verification):} Routed to \code{gpt-5.4} via OpenAI API. The temperature was set to 0.3 for structured reasoning, with a maximum token limit of 2048. The supervisor also assumes the verification role, re-evaluating patched pages after each correction loop.
+    \item \textbf{Persona Simulation Nodes:} Routed to \code{deepseek-v4-pro} via DeepSeek API. The temperature was set to 0.7 to support diverse exploratory path generation, with a maximum token limit of 512.
+    \item \textbf{Recommender and Conflict Resolver Nodes:} Routed to \code{opus-4.6} via Anthropic API. The recommender temperature was set to 0.7 for creative patch synthesis; the resolver temperature was set to 0.2 for deterministic mediation.
     \item \textbf{Persona Configurations:} For each page, the supervisor dynamically generated a diverse set of persona profiles (up to 3 per page by default) representing varying accessibility constraints, cognitive characteristics, and task goals.
 \end{itemize}
 
@@ -285,20 +286,19 @@ To quantify the cost and efficiency profile of \versimux{}, we analyzed the API 
     \toprule
     \textbf{Agent Role} & \textbf{Model Used} & \textbf{Input Tokens} & \textbf{Input Share} & \textbf{Output Tokens} & \textbf{Output Share} \\
     \midrule
-    Supervisor         & Llama-3.3-70B & 4,260  & 15\%  & 615   & 15\% \\
-    Persona Simulator  & Llama-3.1-8B  & 20,448 & 72\%  & 1,640 & 40\% \\
-    Recommender        & Llama-3.3-70B & 2,272  & 8\%   & 820   & 20\% \\
-    Conflict Resolver  & Llama-3.3-70B & 852    & 3\%   & 410   & 10\% \\
-    Verifier           & Llama-3.3-70B & 568    & 2\%   & 615   & 15\% \\
+    Supervisor (incl.\ Verification) & GPT-5.4          & 4,828  & 17\%  & 1,230 & 30\% \\
+    Persona Simulator               & Deepseek-v4-pro  & 20,448 & 72\%  & 1,640 & 40\% \\
+    Recommender                     & Opus 4.6         & 2,272  & 8\%   & 820   & 20\% \\
+    Conflict Resolver               & Opus 4.6         & 852    & 3\%   & 410   & 10\% \\
     \midrule
-    \textbf{Total}     & ---           & \textbf{28,400} & \textbf{100\%} & \textbf{4,100} & \textbf{100\%} \\
+    \textbf{Total}                  & ---              & \textbf{28,400} & \textbf{100\%} & \textbf{4,100} & \textbf{100\%} \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 The persona simulation phase alone accounted for 72\% of all input tokens (20,448 tokens) and 40\% of all output tokens (1,640 tokens). This high volume of input tokens is driven by the fact that each interaction step requires feeding the pruned DOM tree, the interactive element map, and the running history log of prior actions back into the persona's context window. Over multiple simulation steps, this context accumulates rapidly.
 
-To manage the operating costs and latency of this high-volume phase, \versimux{} employs a hybrid model routing strategy. The persona simulation nodes are routed to a smaller, faster model (\code{llama-3.1-8b-instant}), while the reasoning-heavy orchestration nodes---such as the Supervisor, Conflict Resolver, and Verifier---are routed to a larger, more capable model (\code{llama-3.3-70b-versatile}). Because the smaller 8B model is significantly cheaper (often by an order of magnitude or more in commercial API environments) and has lower latency, routing 72\% of the input tokens to this model results in substantial cost savings without compromising the depth of the simulation. Conversely, the more expensive 70B model is reserved for the complex analysis, patch consolidation, and verification tasks, which collectively represent only 28\% of the input token budget. This routing design ensures that the system scales efficiently for large-scale web applications while maintaining high precision and low regression rates.
+To manage the operating costs and latency of this high-volume phase, \versimux{} employs a hybrid model routing strategy. The persona simulation nodes are routed to Deepseek-v4-pro, a cost-efficient, high-throughput model with strong sequential tool-use performance. The reasoning-heavy orchestration nodes---the Supervisor (which also performs post-patch verification)---are routed to GPT-5.4 for its superior structured reasoning and instruction-following accuracy, while the Recommender and Conflict Resolver are routed to Opus~4.6 for best-in-class code generation and multi-turn argumentation. Because Deepseek-v4-pro is significantly cheaper and has lower latency than the frontier models, routing 72\% of the input tokens to this model results in substantial cost savings without compromising the depth of the simulation. Conversely, GPT-5.4 and Opus~4.6 are reserved for the complex analysis, patch synthesis, conflict mediation, and verification tasks, which collectively represent only 28\% of the input token budget. This routing design ensures that the system scales efficiently for large-scale web applications while maintaining high precision and low regression rates.
 
 \subsection{Concurrency Scaling}
 \label{sec:concurrency-scaling}

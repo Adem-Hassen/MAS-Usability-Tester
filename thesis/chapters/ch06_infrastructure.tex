@@ -161,3 +161,65 @@ function applyEvent(prev: PipelineState, ev: StreamEvent): PipelineState {
 \end{code}
 
 This architecture ensures that the frontend remains decoupled from the backend's internal structures. The client consumes a single stream of events, applying changes incrementally. If the connection fails, the client uses an exponential backoff retry strategy to reconnect, sending its last received event ID to resume the stream without losing progress data.
+
+
+% ---- 6.5.1 Nexus Dashboard UI Layout -----------------------------------------
+\subsection{Nexus Dashboard UI Layout}
+\label{sec:dashboard-layout}
+
+To manage the high density of concurrent event telemetry, the \versimux{} user interface is designed as a three-panel responsive layout, referred to as the Nexus Dashboard. This layout is structured to maintain distinct operational boundaries between process tracking, live simulation feedback, and remediation output:
+
+\begin{description}
+  \item[Pipeline Rail (Left Panel).] A fixed-width sidebar (256\,px) that acts as the primary process supervisor indicator. It contains a vertical stepper tracking the active LangGraph execution node (e.g., supervisor, persona simulation, clustering, recommender, conflict resolver, verification, and reporting). The rail integrates a live progress bar and animated counters that update the current count of detected issues and proposed patches in real time using a custom \code{useAnimatedNumber} React hook.
+  
+  \item[Live Preview Panel (Center Panel).] A flexible viewport displaying live execution screenshots streamed from Playwright browser contexts. It supports a multi-column responsive grid (1 to 3 columns) for parallel swarm observation, and a full-width focus carousel with manual navigation. Using the bounding box coordinates (\code{\{x, y, width, height\}}) received in telemetry payloads, the panel overlays semi-transparent SVG rectangles directly on top of the screenshots. These rectangles represent user actions (such as clicks, mouse movements, and text entries) and include animated ripples to visually highlight the target element. Individual persona preview cards are decorated with dynamic border colors determined by hashing the persona's identifier (\code{persona_id}) to prevent visual confusion between active agents.
+  
+  \item[Output and Remediation Console (Right Panel).] A dedicated tabbed workspace (500\,px) that enables developers to toggle between inspecting raw issue cards, browsing proposed patch catalogs, reviewing code-level diffs, and downloading final reports.
+\end{description}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{static/ch06_dashboard.png}
+  \caption{The Next.js dashboard interface showing the three-panel layout, the live preview grid with bounding box overlays, and real-time execution logs.}
+  \label{fig:frontend-dashboard}
+\end{figure}
+
+
+% ---- 6.5.2 Interactive Code-Diff and Remediation Viewer ---------------------
+\subsection{Interactive Code-Diff and Remediation Viewer}
+\label{sec:code-diff-viewer}
+
+The primary mechanism for patch validation is an interactive diff viewer built directly into the remediation console. Rather than presenting static unified patches, the viewer provides a rich side-by-side comparison interface:
+
+\begin{itemize}
+  \item \textbf{Myers Diff Engine:} The client implements a TypeScript-based version of the Myers Longest Common Subsequence (\acr{LCS}) algorithm to compute line-level insertions and deletions dynamically. A secondary LCS pass is run on modified lines to compute word-level changes, highlighting character insertions and deletions inside a line to accelerate developer review.
+  
+  \item \textbf{Syntax Tokenization:} To render the compared code blocks without loading heavy external highlighting libraries, the client uses a lightweight regular-expression-based HTML tokenizer. This custom tokenizer parses HTML elements, separating tags (rendered in rose), attributes (rendered in amber), and string values (rendered in emerald).
+  
+  \item \textbf{Context Folding:} Code files often contain large sections of unchanged markup. The viewer automatically collapses contiguous lines of identical code that are further than 3 lines away from a diff region, substituting them with collapsible \code{···} separators. This focuses developer attention entirely on the proposed edits.
+\end{itemize}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{static/ch06_diff_viewer.png}
+  \caption{The interactive side-by-side diff viewer highlighting code remediation patches and conflict resolution changes.}
+  \label{fig:frontend-diff}
+\end{figure}
+
+
+% ---- 6.5.3 End-to-End Developer Workflow ------------------------------------
+\subsection{End-to-End Developer Workflow}
+\label{sec:developer-workflow}
+
+The operational workflow for a developer utilizing \versimux{} to audit and fix an interface consists of four sequential stages:
+
+\begin{enumerate}
+  \item \textbf{Upload and Config.} The developer uploads 1--5 HTML files via the dashboard's landing page. They can optionally specify natural-language task guidelines, desired target goals (e.g., "submit the registration form successfully"), and configuration parameters such as the maximum persona budget or correction loop iterations.
+  
+  \item \textbf{Live Telemetry Observation.} Upon initiating the execution, the backend starts the LangGraph runner. The developer watches the Live Preview Panel, observing how the persona agents navigate the pages, where they experience accessibility friction, and what issues they flag. The console below the preview streams raw server logs to maintain transparency.
+  
+  \item \textbf{Patch Audit.} Once the simulation and recommender swarm conclude execution, the proposed patches are displayed. The developer reviews the edits inside the side-by-side Diff Viewer, assessing the exact HTML, CSS, or JavaScript modifications.
+  
+  \item \textbf{Export.} After completing the verification loops, the developer downloads a unified ZIP package containing the fully patched HTML, CSS, and JS files, alongside a comprehensive PDF diagnostic report outlining WCAG compliance details, persona feedback, and resolution success rates.
+\end{enumerate}
+

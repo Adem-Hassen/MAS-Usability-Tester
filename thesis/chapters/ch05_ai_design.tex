@@ -11,21 +11,23 @@ This chapter examines the \acr{LLM} integration layer as a first-class engineeri
 \section{Agent Roles and Prompt Architecture}
 \label{sec:agent-roles}
 
-To implement a multi-agent system that is both reliable and resource-efficient, \versimux{} avoids using a single, monolithic agent configuration. Instead, it partitions system tasks across five specialised agent roles. Each role is configured with distinct large language models, sampling temperatures, and system instructions tailored to its cognitive demands. This role separation ensures that high-reasoning models (such as Llama 3.3 70B) are reserved for complex structural analysis and patch negotiation, while faster, lower-cost models (such as Llama 3.1 8B) are routed to repetitive simulation tasks. \Cref{tab:agent-roles} details the configuration of these roles.
+To implement a multi-agent system that is both reliable and resource-efficient, \versimux{} avoids using a single, monolithic agent configuration. Instead, it partitions system tasks across four specialised agent roles. Each role is configured with a distinct large language model, sampling temperature, and system instructions tailored to its cognitive demands. This role separation ensures that high-reasoning models (such as GPT-5.4 for orchestration and Opus~4.6 for patch synthesis and conflict resolution) are reserved for complex structural analysis and negotiation, while a cost-efficient, high-throughput model (Deepseek-v4-pro) is routed to the repetitive persona simulation tasks. Notably, the Supervisor role also assumes responsibility for the verification phase, eliminating the need for a dedicated verifier agent and reducing inter-agent communication overhead. \Cref{tab:agent-roles} details the configuration of these roles.
 
 \begin{table}[htbp]
   \centering
   \caption{VerSimUX Agent Roles Configuration.}
   \label{tab:agent-roles}
-  \begin{tabularx}{\textwidth}{@{}l L{4cm} c X@{}}
+  \begin{tabularx}{\textwidth}{@{}l l c X L{4.2cm}@{}}
     \toprule
-    \textbf{Agent Role} & \textbf{Default LLM Model} & \textbf{Temp.} & \textbf{Functional Purpose} \\
+    \textbf{Role} & \textbf{LLM Model} & \textbf{Temp.} & \textbf{Functional Purpose} & \textbf{Selection Rationale} \\
     \midrule
-    Supervisor          & Llama 3.3 70B Versatile     & 0.3            & Extracts DOM landmarks, calculates persona budgets, and generates recommender profiles. \\
-    Persona             & Llama 3.1 8B Instant        & 0.7            & Simulates human user navigation, executing Plan-Decide-Reflect loops inside browser sandboxes. \\
-    Recommender         & Llama 3.3 70B Versatile     & 0.7            & Translates clustered usability reports into code-level patches. \\
-    Conflict Resolver   & Llama 3.3 70B Versatile     & 0.2            & Detects selector overlaps and mediates multi-round debates between recommending agents. \\
-    Verifier            & Llama 3.3 70B Versatile     & 0.0            & Assesses patched HTML layouts to confirm accessibility compliance and prevent regressions. \\
+    Supervisor        & GPT-5.4          & 0.3 & Extracts DOM landmarks, calculates persona budgets, generates recommender profiles, and performs post-patch verification. & Superior structured reasoning and instruction-following accuracy; excels at multi-step orchestration and JSON schema compliance. \\
+    \addlinespace
+    Persona           & Deepseek-v4-pro  & 0.7 & Simulates human user navigation, executing Plan-Decide-Reflect loops inside browser sandboxes. & High throughput at low cost; strong performance on sequential tool-use tasks; supports the high token volume of per-step DOM injection. \\
+    \addlinespace
+    Recommender       & Opus 4.6         & 0.7 & Translates clustered usability reports into code-level HTML, CSS, and JS patches. & Best-in-class code generation quality; produces syntactically correct, contextually aware patches with minimal hallucination. \\
+    \addlinespace
+    Conflict Resolver & Opus 4.6         & 0.2 & Detects selector overlaps and mediates multi-round debates between recommending agents. & Advanced multi-turn argumentation and logical consistency; low temperature ensures deterministic, fair mediation outcomes. \\
     \bottomrule
   \end{tabularx}
 \end{table}

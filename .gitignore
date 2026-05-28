@@ -15,6 +15,7 @@ frontend/.env.local
 outputs/
 docs/
 scratch/
+
 # VS Code settings (optional but recommended)
 .vscode/
 
