@@ -110,6 +110,19 @@
   belowskip=1em,
 }
 
+\lstnewenvironment{code}[1][]
+  {\lstset{basicstyle=\small\ttfamily\color{codePrimary},
+           backgroundcolor=\color{codeBackground},
+           frame=single,
+           rulecolor=\color{codeFrame},
+           framesep=8pt,
+           xleftmargin=12pt,
+           xrightmargin=12pt,
+           breaklines=true,
+           showstringspaces=false,
+           #1}}
+  {}
+
 \lstset{style=pythonstyle}
 
 % ---- Mathematics -------------------------------------------------------------
