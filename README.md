@@ -1,4 +1,4 @@
-# MAS Usability Tester
+# VerSimUX
 
 A next-generation Multi-Agent System (MAS) for automated usability and accessibility evaluation. It leverages **LangGraph**, **Groq (Llama 3.3)**, and **Playwright** to simulate human interactions, identify friction points, and automatically apply high-quality UI patches.
 
