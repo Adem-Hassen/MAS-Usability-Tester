@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Harbor Bank — Update mobile number</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: #f4f6f8;
+      color: #1a1a1a;
+    }
+    a:focus, button:focus, input:focus {
+      outline: 3px solid #005fcc;
+      outline-offset: 2px;
+    }
+    header {
+      background: #0b3a5b;
+      color: #fff;
+      padding: 14px 28px;
+    }
+    .skip {
+      position: absolute;
+      left: 8px;
+      top: -40px;
+      background: #fff;
+      color: #0b3a5b;
+      padding: 8px 12px;
+    }
+    .skip:focus { top: 8px; }
+    main {
+      max-width: 480px;
+      margin: 40px auto;
+      background: #fff;
+      border: 1px solid #e2e6ea;
+      border-radius: 10px;
+      padding: 28px;
+    }
+    label { display: block; font-weight: 600; margin-top: 14px; }
+    .hint { color: #3d4a54; font-size: 14px; margin: 4px 0 6px; }
+    input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #5c6770;
+      border-radius: 6px;
+      font-size: 16px;
+      min-height: 44px;
+    }
+    button {
+      margin-top: 18px;
+      background: #0b3a5b;
+      color: #fff;
+      border: 0;
+      border-radius: 6px;
+      min-height: 44px;
+      padding: 12px 18px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    .error { color: #8a1c13; font-weight: 600; }
+    .ok { color: #0d5c2e; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to main content</a>
+  <header><strong>Harbor Bank</strong></header>
+  <main id="main">
+    <h1>Update your mobile number</h1>
+    <p>We will send a confirmation code to the new number.</p>
+    <form id="mobileForm">
+      <label for="mobile">Mobile number</label>
+      <p class="hint" id="mobileHint">UK format, 11 digits starting with 07. Example: 07123456789</p>
+      <input id="mobile" name="mobile" type="tel" inputmode="numeric"
+             autocomplete="tel" aria-describedby="mobileHint mobileError" required>
+      <p id="mobileError" class="error" role="alert"></p>
+      <button type="submit">Save number</button>
+    </form>
+    <p id="result" class="ok" role="status"></p>
+  </main>
+  <script>
+    document.getElementById("mobileForm").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var input = document.getElementById("mobile");
+      var error = document.getElementById("mobileError");
+      var result = document.getElementById("result");
+      result.textContent = "";
+      if (!/^07\d{9}$/.test(input.value.trim())) {
+        error.textContent = "Enter an 11-digit UK mobile number starting with 07.";
+        input.focus();
+        return;
+      }
+      error.textContent = "";
+      result.textContent = "Mobile number saved. A confirmation code is on the way.";
+    });
+  </script>
+</body>
+</html>

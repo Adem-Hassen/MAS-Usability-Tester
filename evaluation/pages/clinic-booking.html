@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Riverside Clinic — Book a visit</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: #f7f8f5;
+      color: #1b1b1b;
+    }
+    .banner {
+      background: #1f6b4a;
+      color: #fff;
+      padding: 14px 24px;
+      font-weight: 650;
+    }
+    .panel {
+      max-width: 560px;
+      margin: 28px auto;
+      background: #fff;
+      border: 1px solid #e1e6dc;
+      padding: 22px;
+    }
+    .heading { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
+    input {
+      width: 100%;
+      margin: 8px 0;
+      padding: 10px;
+      border: 1px solid #c9d1c2;
+      border-radius: 4px;
+      font-size: 15px;
+    }
+    .slots { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 14px; }
+    .slot {
+      width: 28px;
+      height: 28px;
+      border: 1px solid #c9d1c2;
+      background: #fff;
+      font-size: 10px;
+      padding: 0;
+      cursor: pointer;
+    }
+    .slot.picked { background: #d7efe3; border-color: #d7efe3; }
+    .book {
+      background: #1f6b4a;
+      color: #fff;
+      border: 0;
+      padding: 8px 12px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="banner">Riverside Clinic</div>
+  <div class="panel">
+    <img width="512" height="80" alt=""
+         src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='512' height='80'><rect fill='%231f6b4a' width='512' height='80'/><text x='16' y='48' fill='white' font-size='18'>Flu clinic — walk-ins close at 16:00</text></svg>">
+    <div class="heading">Book a visit</div>
+    <form id="bookForm">
+      <input id="patient" tabindex="5" placeholder="Full name" style="outline:none">
+      <input id="when" tabindex="1" placeholder="Date" style="outline:none">
+      <input id="mobile" tabindex="3" placeholder="Mobile" style="outline:none">
+      <div class="slots" id="slots">
+        <button type="button" class="slot" data-time="09:00" style="outline:none">9</button>
+        <button type="button" class="slot" data-time="10:30" style="outline:none">10</button>
+        <button type="button" class="slot" data-time="13:00" style="outline:none">13</button>
+        <button type="button" class="slot" data-time="15:30" style="outline:none">15</button>
+      </div>
+      <button class="book" type="submit" tabindex="2" style="outline:none">Book</button>
+    </form>
+    <p id="bookStatus"></p>
+  </div>
+  <script>
+    var chosen = "";
+    document.querySelectorAll(".slot").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".slot").forEach(function (b) { b.classList.remove("picked"); });
+        btn.classList.add("picked");
+        chosen = btn.getAttribute("data-time");
+      });
+    });
+    document.getElementById("bookForm").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var when = document.getElementById("when");
+      var mobile = document.getElementById("mobile");
+      var patient = document.getElementById("patient");
+      if (!patient.value || !/^\d{2}\/\d{2}\/\d{4}$/.test(when.value) || !/^07\d{8,}$/.test(mobile.value) || !chosen) {
+        return;
+      }
+      document.getElementById("bookStatus").textContent = "Booked " + when.value + " at " + chosen;
+    });
+  </script>
+</body>
+</html>

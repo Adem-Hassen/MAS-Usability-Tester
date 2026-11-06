@@ -64,6 +64,7 @@ logger = get_logger(__name__)
 # Provider base URLs
 # ---------------------------------------------------------------------------
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
 MOONSHOT_BASE_URL = "https://api.moonshot.ai/v1"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
@@ -82,7 +83,8 @@ def _base_url_for(model: str) -> Optional[str]:
     """
     if model.startswith(("gpt-", "o1-", "o3-", "o4-")):
         return None        # OpenAI — use SDK default base URL
-
+    if model.startswith("claude"):
+        return ANTHROPIC_BASE_URL
     if model.startswith(("qwen", "qwq")):
         return QWEN_BASE_URL
 
@@ -98,9 +100,13 @@ def _base_url_for(model: str) -> Optional[str]:
     return GROQ_BASE_URL
 
 
+def _is_claude_model(model: str) -> bool:
+    return bool(model) and model.startswith("claude")
+
+
 def _supports_json_mode(base_url: Optional[str] = None, model: str = "") -> bool:
     """
-    Return True if the provider supports response_format={"type": "json_object"}.
+    Return True if the provider supports a structured JSON response_format.
 
     Detection order:
       1. Model name prefix (most reliable — covers custom URLs)
@@ -110,9 +116,16 @@ def _supports_json_mode(base_url: Optional[str] = None, model: str = "") -> bool
       - Qwen / QwQ (Alibaba) → 500 error
       - DeepSeek → may error
       - Moonshot / Kimi → returns empty content with json_object
+
+    Claude / Anthropic: False — see _response_format_for() (cannot use
+    free-form json_object or open json_schema on that endpoint).
     """
     if model:
         if model.startswith(("qwen", "qwq")):
+            return False
+        # Anthropic OpenAI-compat rejects json_object; open json_schema is impossible
+        # (additionalProperties must be false). Omit response_format for Claude.
+        if _is_claude_model(model):
             return False
         # Kimi and DeepSeek now support JSON mode via OpenAI-compatible endpoints
         if model.startswith("deepseek-"):
@@ -125,8 +138,29 @@ def _supports_json_mode(base_url: Optional[str] = None, model: str = "") -> bool
         return True
     if QWEN_BASE_URL in (base_url or ""):
         return False
+    if base_url and ANTHROPIC_BASE_URL.rstrip("/") in base_url.rstrip("/"):
+        return False
     # Standard OpenAI-compatible JSON mode detection
-    return True    
+    return True
+
+
+def _response_format_for(model: str, base_url: Optional[str] = None) -> Optional[dict]:
+    """
+    Build provider-appropriate response_format for JSON output.
+
+    Claude / Anthropic OpenAI-compat:
+      - Rejects type=json_object (400: type must be json_schema).
+      - Accepts only type=json_schema with strict=true AND
+        additionalProperties:false on every object — so free-form /
+        prompt-driven shapes cannot be expressed here.
+      - Return None (omit response_format); prompts already require JSON.
+
+    Other providers that support JSON mode: type=json_object.
+    """
+    if not _supports_json_mode(base_url=base_url, model=model):
+        return None
+
+    return {"type": "json_object"}
 
 
 def _normalize_provider_params(model: str, temperature: float, max_tokens: int) -> tuple[float, int]:
@@ -287,13 +321,14 @@ def chat_completion(
     estimated_tokens = sum(len(m.get("content", "")) // 4 for m in messages) + max_completion_tokens
 
     current_model = model
+    base_url = _base_url_for(current_model)
+    use_json_mode = _supports_json_mode(base_url=base_url, model=current_model)
 
     for attempt in range(1, max_retries + 1):
         active_key = keys[(attempt - 1) % len(keys)]
         key_state = _get_key_state(active_key, max_concurrent, tpm_limit)
         base_url = _base_url_for(current_model)
         client = OpenAI(api_key=active_key, base_url=base_url)
-        use_json_mode = _supports_json_mode(base_url=base_url, model=current_model)
 
         # Normalize provider-specific parameters
         use_temp, use_max_tokens = _normalize_provider_params(current_model, temperature, max_completion_tokens)
@@ -321,8 +356,9 @@ def chat_completion(
                 temperature=use_temp,
                 max_completion_tokens=use_max_tokens,
             )
-            if use_json_mode:
-                call_kwargs["response_format"] = {"type": "json_object"}
+            response_format = _response_format_for(current_model, base_url) if use_json_mode else None
+            if response_format is not None:
+                call_kwargs["response_format"] = response_format
 
             response = client.chat.completions.create(**call_kwargs)
 
@@ -392,12 +428,23 @@ def chat_completion(
                 return "", f"Rate limit — {max_retries} retries exhausted ({task})"
 
         except APIStatusError as e:
-            if e.status_code == 500 and use_json_mode and attempt < max_retries:
-                # Some providers return 500 when response_format is not supported.
-                # Retry once without it.
-                logger.warning(f"llm.{task}.provider_500_json_mode",
+            msg = e.message or ""
+            response_format_rejected = (
+                e.status_code == 400
+                and "response_format" in msg.lower()
+            )
+            if (
+                use_json_mode
+                and attempt < max_retries
+                and (e.status_code == 500 or response_format_rejected)
+            ):
+                # Some providers error when response_format is unsupported or
+                # the schema shape is rejected (e.g. Claude + additionalProperties).
+                # Retry without it; prompts still request JSON.
+                logger.warning(f"llm.{task}.provider_json_mode_rejected",
+                               status=e.status_code,
                                attempt=attempt,
-                               message=f"{e.message[:120]}..." if len(e.message) > 120 else e.message)
+                               message=f"{msg[:120]}..." if len(msg) > 120 else msg)
                 use_json_mode = False
                 time.sleep(random.uniform(0.5, 1.5))
                 continue

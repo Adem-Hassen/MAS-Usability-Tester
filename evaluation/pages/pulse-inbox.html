@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Pulse — Inbox</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: #f3f4f6;
+      color: #111;
+    }
+    .bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #111827;
+      color: #fff;
+      padding: 10px 16px;
+    }
+    .brand { font-weight: 700; margin-right: 12px; }
+    .icon {
+      width: 24px;
+      height: 24px;
+      border: 0;
+      border-radius: 4px;
+      background: #374151;
+      color: #fff;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 24px;
+      padding: 0;
+    }
+    .layout { display: grid; grid-template-columns: 200px 1fr; min-height: calc(100vh - 48px); }
+    .nav { background: #fff; border-right: 1px solid #e5e7eb; padding: 12px; }
+    .item {
+      padding: 8px 10px;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .item:hover { background: #f3f4f6; }
+    .item.active { background: #e5e7eb; }
+    .list { padding: 16px 20px; }
+    .row {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      cursor: pointer;
+    }
+    .meta { font-size: 12px; margin-top: 4px; }
+    .chart { margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <span class="brand">Pulse</span>
+    <button class="icon" id="searchBtn" style="outline:none">&#128269;</button>
+    <button class="icon" id="filterBtn" style="outline:none">&#9881;</button>
+    <button class="icon" id="deleteBtn" style="outline:none">&#128465;</button>
+  </div>
+  <div class="layout">
+    <div class="nav">
+      <div class="item active" data-box="inbox">Inbox</div>
+      <div class="item" data-box="sent">Sent</div>
+      <div class="item" data-box="archive">Archive</div>
+    </div>
+    <div class="list">
+      <div style="font-size:20px; font-weight:650; margin-bottom:12px;">Inbox</div>
+      <div class="row" id="msg1">
+        <strong>Invoice 1842 is ready</strong>
+        <div class="meta" style="color:#c5c5c5">Finance · today 09:14</div>
+      </div>
+      <div class="row" id="msg2">
+        <strong>Your password expires Friday</strong>
+        <div class="meta" style="color:#c5c5c5">Security · yesterday</div>
+      </div>
+      <img class="chart" alt="" width="420" height="120"
+           src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='120'><rect fill='%23fff' width='420' height='120'/><polyline fill='none' stroke='%23111827' stroke-width='2' points='10,90 80,70 150,76 220,40 300,48 400,22'/><text x='12' y='18' font-size='12' fill='%23111827'>Unread this week: 18</text></svg>">
+      <p id="inboxStatus"></p>
+    </div>
+  </div>
+  <script>
+    document.querySelectorAll(".item").forEach(function (el) {
+      el.addEventListener("click", function () {
+        document.querySelectorAll(".item").forEach(function (n) { n.classList.remove("active"); });
+        el.classList.add("active");
+        document.querySelector(".list > div").textContent = el.getAttribute("data-box");
+      });
+    });
+    document.querySelectorAll(".row").forEach(function (row) {
+      row.addEventListener("click", function () {
+        document.getElementById("inboxStatus").textContent = "Opened: " + row.querySelector("strong").textContent;
+      });
+    });
+    document.getElementById("searchBtn").addEventListener("click", function () {
+      var q = prompt("Search");
+      if (q) document.getElementById("inboxStatus").textContent = "Search: " + q;
+    });
+    document.getElementById("deleteBtn").addEventListener("click", function () {
+      var row = document.querySelector(".row");
+      if (row) row.remove();
+    });
+    document.getElementById("filterBtn").addEventListener("click", function () {
+      document.getElementById("inboxStatus").textContent = "Showing unread only";
+    });
+  </script>
+</body>
+</html>

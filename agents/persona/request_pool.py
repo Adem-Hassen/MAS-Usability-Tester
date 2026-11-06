@@ -10,7 +10,13 @@ from openai import AsyncOpenAI, RateLimitError, APIStatusError
 
 from config.settings import settings
 from monitoring.logger import get_logger
-from tools.rate_limiter import _base_url_for, _parse_retry_after, _supports_json_mode, _normalize_provider_params
+from tools.rate_limiter import (
+    _base_url_for,
+    _parse_retry_after,
+    _supports_json_mode,
+    _normalize_provider_params,
+    _response_format_for,
+)
 
 logger = get_logger(__name__)
 
@@ -79,6 +85,8 @@ class PersonaAsyncRequestPool:
         max_retries = getattr(settings, "llm_max_retries", 5)
         base_delay = getattr(settings, "llm_retry_delay_seconds", 5.0)
         current_model = model
+        base_url = _base_url_for(current_model)
+        use_json_mode = _supports_json_mode(base_url=base_url, model=current_model)
 
         for attempt in range(1, max_retries + 1):
             now = time.monotonic()
@@ -96,7 +104,6 @@ class PersonaAsyncRequestPool:
             # Override base URL per model (for Moonshot/OpenRouter support)
             base_url = _base_url_for(current_model) or client.base_url
             client.base_url = base_url
-            use_json_mode = _supports_json_mode(base_url=base_url, model=current_model)
 
             # Normalize provider-specific parameters
             use_temp, use_max_tokens = _normalize_provider_params(current_model, temperature, max_tokens)
@@ -113,8 +120,12 @@ class PersonaAsyncRequestPool:
                         temperature=use_temp,
                         max_tokens=use_max_tokens,
                     )
-                    if use_json_mode:
-                        call_kwargs["response_format"] = {"type": "json_object"}
+                    response_format = (
+                        _response_format_for(current_model, _base_url_for(current_model))
+                        if use_json_mode else None
+                    )
+                    if response_format is not None:
+                        call_kwargs["response_format"] = response_format
                     response = await client.chat.completions.create(**call_kwargs)
 
                     if not response.choices:
@@ -172,10 +183,20 @@ class PersonaAsyncRequestPool:
                         return "", f"Rate limit — {max_retries} retries exhausted ({task})"
 
                 except APIStatusError as e:
-                    if e.status_code == 500 and use_json_mode and attempt < max_retries:
-                        logger.warning(f"llm.{task}.provider_500_json_mode",
+                    msg = e.message or ""
+                    response_format_rejected = (
+                        e.status_code == 400
+                        and "response_format" in msg.lower()
+                    )
+                    if (
+                        use_json_mode
+                        and attempt < max_retries
+                        and (e.status_code == 500 or response_format_rejected)
+                    ):
+                        logger.warning(f"llm.{task}.provider_json_mode_rejected",
+                                       status=e.status_code,
                                        attempt=attempt,
-                                       message=f"{e.message[:120]}..." if len(e.message) > 120 else e.message)
+                                       message=f"{msg[:120]}..." if len(msg) > 120 else msg)
                         use_json_mode = False
                         await asyncio.sleep(random.uniform(0.5, 1.5))
                         continue
